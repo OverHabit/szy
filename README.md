@@ -12,6 +12,19 @@ python -m streamlit run app.py
 
 浏览器访问 `http://localhost:8501`。
 
+## 跨设备协作
+
+项目代码、开发约定和进度通过 GitHub 仓库同步：
+
+- `AGENTS.md`：开发协作规则和工程约定。
+- `PROJECT_STATUS.md`：当前功能、已解决问题和后续路线。
+
+在另一台电脑首次使用时克隆仓库，之后开始工作前执行：
+
+```bash
+git pull origin master
+```
+
 ## 策略规则
 
 - 短期均线高于长期均线时持有，否则空仓。
