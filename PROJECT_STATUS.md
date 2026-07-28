@@ -45,6 +45,8 @@
 - 代码已上传到公开仓库 `https://github.com/OverHabit/szy`。
 - Windows 与 Mac 可通过 GitHub 拉取同一份代码和项目文档。
 - Codex 获得授权后可按用户指令直接提交，不需要每次手工运行 PowerShell。
+- 已增加 `CROSS_DEVICE_SETUP.md`，记录跨设备安装、Codex Git 权限、GitHub Token
+  权限、安全边界和日常同步流程。
 
 ## 已解决的问题
 
@@ -113,4 +115,3 @@
 
 优先完成 P1 的多策略统一接口，同时保留现有双均线结果不变。完成后再增加股票池，
 这样 OCR 和每日信号任务都可以复用同一套“股票池 + 策略列表”数据结构。
-

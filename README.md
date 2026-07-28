@@ -18,6 +18,7 @@ python -m streamlit run app.py
 
 - `AGENTS.md`：开发协作规则和工程约定。
 - `PROJECT_STATUS.md`：当前功能、已解决问题和后续路线。
+- `CROSS_DEVICE_SETUP.md`：Windows、Mac、Codex 和 GitHub 的完整配置步骤。
 
 在另一台电脑首次使用时克隆仓库，之后开始工作前执行：
 
