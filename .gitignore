@@ -1,0 +1,9 @@
+.cache/
+__pycache__/
+.pytest_cache/
+*.log
+.venv/
+outputs/
+work/
+publish_to_github.ps1
+.github_token
