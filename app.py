@@ -73,6 +73,30 @@ def pct(value: float) -> str:
     return f"{value:+.2%}"
 
 
+def chart_range(data: pd.DataFrame) -> list[pd.Timestamp]:
+    """Focus charts on the most recent year while retaining all history."""
+    dates = pd.to_datetime(data["date"])
+    latest = dates.max()
+    earliest = dates.min()
+    return [max(earliest, latest - pd.DateOffset(years=1)), latest]
+
+
+def chart_range_selector() -> dict[str, object]:
+    return {
+        "buttons": [
+            {"count": 3, "label": "3个月", "step": "month", "stepmode": "backward"},
+            {"count": 6, "label": "6个月", "step": "month", "stepmode": "backward"},
+            {"count": 1, "label": "1年", "step": "year", "stepmode": "backward"},
+            {"count": 3, "label": "3年", "step": "year", "stepmode": "backward"},
+            {"label": "全部", "step": "all"},
+        ],
+        "x": 0,
+        "y": 1.13,
+        "xanchor": "left",
+        "yanchor": "top",
+    }
+
+
 def build_price_chart(data: pd.DataFrame, short: int, long: int) -> go.Figure:
     fig = go.Figure()
     fig.add_trace(
@@ -126,16 +150,20 @@ def build_price_chart(data: pd.DataFrame, short: int, long: int) -> go.Figure:
     )
     fig.update_layout(
         height=520,
-        margin={"l": 10, "r": 10, "t": 20, "b": 10},
+        margin={"l": 10, "r": 10, "t": 54, "b": 10},
         paper_bgcolor="#ffffff",
         plot_bgcolor="#ffffff",
         hovermode="x unified",
         legend={"orientation": "h", "y": 1.02, "x": 0},
-        xaxis_rangeslider_visible=False,
         yaxis_title="价格（元）",
     )
-    fig.update_xaxes(showgrid=False)
-    fig.update_yaxes(gridcolor="#e7ece8")
+    fig.update_xaxes(
+        range=chart_range(data),
+        rangeslider_visible=False,
+        rangeselector=chart_range_selector(),
+        showgrid=False,
+    )
+    fig.update_yaxes(gridcolor="#e7ece8", automargin=True)
     return fig
 
 
@@ -180,20 +208,26 @@ def build_performance_chart(data: pd.DataFrame) -> go.Figure:
     )
     fig.update_layout(
         height=480,
-        margin={"l": 10, "r": 10, "t": 20, "b": 10},
+        margin={"l": 10, "r": 10, "t": 54, "b": 10},
         paper_bgcolor="#ffffff",
         plot_bgcolor="#ffffff",
         hovermode="x unified",
         legend={"orientation": "h", "y": 1.03, "x": 0},
     )
-    fig.update_yaxes(title_text="累计净值", gridcolor="#e7ece8", row=1, col=1)
-    fig.update_yaxes(title_text="回撤", tickformat=".0%", gridcolor="#e7ece8", row=2, col=1)
-    fig.update_xaxes(showgrid=False)
+    fig.update_yaxes(
+        title_text="累计净值", gridcolor="#e7ece8", automargin=True, row=1, col=1
+    )
+    fig.update_yaxes(
+        title_text="回撤", tickformat=".0%", gridcolor="#e7ece8", automargin=True, row=2, col=1
+    )
+    fig.update_xaxes(range=chart_range(data), showgrid=False)
+    fig.update_xaxes(
+        rangeselector=chart_range_selector(), row=2, col=1
+    )
     return fig
 
 
 def show_metrics(metrics: BacktestMetrics) -> None:
-    columns = st.columns(7)
     values = [
         ("策略收益", pct(metrics.total_return)),
         ("买入持有", pct(metrics.benchmark_return)),
@@ -203,7 +237,11 @@ def show_metrics(metrics: BacktestMetrics) -> None:
         ("交易次数", str(metrics.trade_count)),
         ("胜率", f"{metrics.win_rate:.1%}"),
     ]
-    for column, (label, value) in zip(columns, values):
+    # Seven cards in one row leave too little room for percentage values when the
+    # sidebar is open.  Keep the summary readable on ordinary laptop screens.
+    for column, (label, value) in zip(st.columns(4), values[:4]):
+        column.metric(label, value)
+    for column, (label, value) in zip(st.columns(3), values[4:]):
         column.metric(label, value)
 
 
@@ -268,14 +306,14 @@ price_tab, performance_tab, trades_tab, data_tab = st.tabs(
 with price_tab:
     st.plotly_chart(
         build_price_chart(result, int(short_window), int(long_window)),
-        width="stretch",
+        use_container_width=True,
         config={"displaylogo": False, "scrollZoom": True},
     )
 
 with performance_tab:
     st.plotly_chart(
         build_performance_chart(result),
-        width="stretch",
+        use_container_width=True,
         config={"displaylogo": False},
     )
 
