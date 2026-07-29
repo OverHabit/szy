@@ -1,7 +1,7 @@
 import numpy as np
 import pandas as pd
 
-from quant_core import run_ma_crossover
+from quant_core import run_ma_crossover, run_volume_breakout
 
 
 def sample_prices(rows: int = 80) -> pd.DataFrame:
@@ -39,5 +39,39 @@ def test_rejects_invalid_windows():
         run_ma_crossover(sample_prices(), short_window=20, long_window=10)
     except ValueError as exc:
         assert "短期均线" in str(exc)
+    else:
+        raise AssertionError("Expected ValueError")
+
+
+def test_volume_breakout_uses_prior_high_and_prior_average_volume():
+    prices = sample_prices(rows=30)
+    prices["close"] = [10.0] * 20 + [11.0, 11.5, 12.0] + [9.0] * 7
+    prices["open"] = prices["close"]
+    prices["high"] = prices["close"] + 0.5
+    prices["low"] = prices["close"] - 0.5
+    prices["volume"] = [100] * 20 + [200] + [100] * 9
+
+    result, _, _ = run_volume_breakout(
+        prices,
+        breakout_window=5,
+        volume_window=5,
+        volume_multiple=1.5,
+        exit_window=3,
+    )
+
+    breakout_index = 20
+    assert result.loc[breakout_index, "entry_signal"]
+    assert result.loc[breakout_index, "position"] == 0
+    assert result.loc[breakout_index + 1, "position"] == 1
+    assert result.loc[breakout_index, "volume_ratio"] == 2.0
+    assert result.loc[23, "signal"] == 0
+    assert result.loc[24, "position"] == 0
+
+
+def test_volume_breakout_rejects_nonpositive_volume_multiple():
+    try:
+        run_volume_breakout(sample_prices(), volume_multiple=0)
+    except ValueError as exc:
+        assert "放量倍数" in str(exc)
     else:
         raise AssertionError("Expected ValueError")
