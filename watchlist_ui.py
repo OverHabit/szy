@@ -7,6 +7,7 @@ from typing import Any
 import pandas as pd
 import streamlit as st
 
+from daily_signal import SignalResult, run_once
 from watchlist_store import (
     DEFAULT_PARAMETERS,
     delete_watchlist_entry,
@@ -47,6 +48,26 @@ def render_watchlist_page() -> None:
         )
         st.dataframe(overview, width="stretch", hide_index=True)
 
+    st.subheader("立即运行")
+    st.caption("按当前启用的配置获取行情并计算一次信号。此操作只在网页展示结果，不发送邮件，也不会改变 Hermes 定时任务。")
+    if st.button("立即运行已启用自选", type="primary", width="stretch", disabled=not enabled_count):
+        with st.spinner("正在获取行情并计算信号，请稍候…"):
+            st.session_state["watchlist_signal_results"] = _signal_results_frame(run_once())
+
+    results = st.session_state.get("watchlist_signal_results")
+    if isinstance(results, pd.DataFrame):
+        st.subheader("本次运行结果")
+        st.dataframe(
+            results,
+            width="stretch",
+            hide_index=True,
+            column_config={
+                "参考收盘价": st.column_config.NumberColumn(format="%.3f"),
+            },
+        )
+        if "状态" in results and (results["状态"] == "等待数据").any():
+            st.warning("部分标的尚无可用行情。可稍后再试；“预估”表示使用含 15:00 的分钟行情临时计算，待正式日线确认。")
+
     with st.expander("添加股票或 ETF 策略", expanded=not entries):
         _entry_form("new", {**DEFAULT_PARAMETERS, "enabled": True, "name": "", "symbol": "", "instrument_type": "stock", "strategy_id": "ma_crossover"})
 
@@ -57,6 +78,26 @@ def render_watchlist_page() -> None:
             _entry_form(str(entry["id"]), entry)
 
     st.caption("研究提示：参数与历史回测仅供研究参考，不构成投资建议。")
+
+
+def _signal_results_frame(results: list[SignalResult]) -> pd.DataFrame:
+    """Prepare runner output for a compact, readable Streamlit table."""
+    return pd.DataFrame(
+        [
+            {
+                "代码": result.symbol,
+                "名称": result.name or "—",
+                "策略": STRATEGIES.get(result.strategy_id, result.strategy_id),
+                "信号": result.action,
+                "状态": result.status,
+                "数据日期": result.data_date.isoformat() if result.data_date else "—",
+                "参考收盘价": result.close,
+                "数据源": result.source or "—",
+                "说明": result.reason,
+            }
+            for result in results
+        ]
+    )
 
 
 def _entry_form(form_key: str, entry: dict[str, Any]) -> None:
