@@ -57,10 +57,10 @@ def test_daily_signal_rejects_stale_data_and_outputs_web_link(tmp_path):
 
 
 def test_daily_signal_passes_etf_type_to_data_gateway(tmp_path):
-    received = {}
+    received = set()
 
     def fetcher(*args, **kwargs):
-        received.update(kwargs)
+        received.add(kwargs["instrument_type"])
         prices = sample_prices()
         prices.attrs["source"] = "测试源"
         prices.attrs["stale"] = True
@@ -72,7 +72,7 @@ def test_daily_signal_passes_etf_type_to_data_gateway(tmp_path):
         fetcher=fetcher,
         minute_fetcher=lambda *_: (_ for _ in ()).throw(ValueError("分钟线未更新")),
     )
-    assert received["instrument_type"] == "etf"
+    assert received == {"stock", "etf"}
 
 
 def test_daily_signal_uses_minute_bar_when_official_daily_bar_is_missing(tmp_path):

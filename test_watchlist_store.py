@@ -1,18 +1,18 @@
 from pathlib import Path
 import sqlite3
 
-from watchlist_store import list_watchlist, save_watchlist_entry
+from watchlist_store import DEFAULT_WATCHLIST, list_watchlist, save_watchlist_entry
 
 
-def test_new_database_contains_requested_588000_configuration(tmp_path: Path):
+def test_new_database_contains_the_versioned_default_watchlist(tmp_path: Path):
     entries = list_watchlist(tmp_path / "watchlist.db")
 
-    assert len(entries) == 1
-    assert entries[0]["symbol"] == "588000"
-    assert entries[0]["name"] == "科创50ETF"
-    assert entries[0]["instrument_type"] == "etf"
-    assert entries[0]["strategy_id"] == "ma_crossover"
-    assert entries[0]["enabled"] == 1
+    assert len(entries) == len(DEFAULT_WATCHLIST)
+    etf = next(entry for entry in entries if entry["symbol"] == "588000")
+    assert etf["name"] == "科创50ETF"
+    assert etf["instrument_type"] == "etf"
+    assert all(entry["strategy_id"] == "ma_crossover" for entry in entries)
+    assert all(entry["enabled"] == 1 for entry in entries)
 
 
 def test_watchlist_can_be_changed_without_a_json_file(tmp_path: Path):

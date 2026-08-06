@@ -28,6 +28,22 @@ DEFAULT_PARAMETERS = {
     "fee_bps": 3.0,
 }
 
+# These are intentionally versioned defaults so the local app and the public
+# Streamlit deployment begin with the same personal research watchlist.
+DEFAULT_WATCHLIST = (
+    {"symbol": "000547", "name": "航天发展", "instrument_type": "stock"},
+    {"symbol": "001283", "name": "豪鹏科技", "instrument_type": "stock"},
+    {"symbol": "002050", "name": "三花智控", "instrument_type": "stock"},
+    {"symbol": "002202", "name": "金风科技", "instrument_type": "stock"},
+    {"symbol": "002270", "name": "华明装备", "instrument_type": "stock"},
+    {"symbol": "588000", "name": "科创50ETF", "instrument_type": "etf"},
+    {"symbol": "600029", "name": "南方航空", "instrument_type": "stock"},
+    {"symbol": "600276", "name": "恒瑞医药", "instrument_type": "stock"},
+    {"symbol": "600309", "name": "万华化学", "instrument_type": "stock"},
+    {"symbol": "600879", "name": "航天电子", "instrument_type": "stock"},
+    {"symbol": "603993", "name": "洛阳钼业", "instrument_type": "stock"},
+)
+
 
 def _connect(database_path: Path | str | None = None) -> sqlite3.Connection:
     path = DATABASE_PATH if database_path is None else Path(database_path)
@@ -76,36 +92,27 @@ def initialise_watchlist(database_path: Path | str | None = None) -> None:
         connection.execute(
             "UPDATE watchlist_entries SET instrument_type = 'etf' WHERE symbol = '588000'"
         )
-        existing = connection.execute(
-            "SELECT 1 FROM watchlist_entries WHERE symbol = ? AND strategy_id = ?",
-            ("588000", "ma_crossover"),
-        ).fetchone()
-        if existing is None:
-            now = _now()
-            connection.execute(
-                """
-                INSERT INTO watchlist_entries (
-                    symbol, name, instrument_type, strategy_id, enabled, adjust, short_window,
-                    long_window, breakout_window, volume_window, volume_multiple,
-                    exit_window, fee_bps, created_at, updated_at
-                ) VALUES (?, ?, 'etf', ?, 1, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                """,
-                (
-                    "588000",
-                    "科创50ETF",
-                    "ma_crossover",
-                    DEFAULT_PARAMETERS["adjust"],
-                    DEFAULT_PARAMETERS["short_window"],
-                    DEFAULT_PARAMETERS["long_window"],
-                    DEFAULT_PARAMETERS["breakout_window"],
-                    DEFAULT_PARAMETERS["volume_window"],
-                    DEFAULT_PARAMETERS["volume_multiple"],
-                    DEFAULT_PARAMETERS["exit_window"],
-                    DEFAULT_PARAMETERS["fee_bps"],
-                    now,
-                    now,
-                ),
-            )
+        for default_entry in DEFAULT_WATCHLIST:
+            existing = connection.execute(
+                "SELECT 1 FROM watchlist_entries WHERE symbol = ? AND strategy_id = ?",
+                (default_entry["symbol"], "ma_crossover"),
+            ).fetchone()
+            if existing is None:
+                now = _now()
+                connection.execute(
+                    """
+                    INSERT INTO watchlist_entries (
+                        symbol, name, instrument_type, strategy_id, enabled, adjust, short_window,
+                        long_window, breakout_window, volume_window, volume_multiple,
+                        exit_window, fee_bps, created_at, updated_at
+                    ) VALUES (
+                        :symbol, :name, :instrument_type, 'ma_crossover', 1, :adjust,
+                        :short_window, :long_window, :breakout_window, :volume_window,
+                        :volume_multiple, :exit_window, :fee_bps, :created_at, :updated_at
+                    )
+                    """,
+                    {**DEFAULT_PARAMETERS, **default_entry, "created_at": now, "updated_at": now},
+                )
 
 
 def list_watchlist(
