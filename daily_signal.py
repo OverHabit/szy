@@ -8,7 +8,7 @@ configured email channel.
 from __future__ import annotations
 
 import argparse
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import date, datetime, timedelta
 import time
 from typing import Any, Callable
@@ -16,7 +16,7 @@ from zoneinfo import ZoneInfo
 
 import pandas as pd
 
-from market_data import fetch_a_share_history
+from market_data import fetch_a_share_history, fetch_provisional_daily_bar
 from quant_core import run_ma_crossover, run_volume_breakout
 from watchlist_store import DATABASE_PATH, list_watchlist
 
@@ -104,12 +104,15 @@ def run_once(
     database_path=DATABASE_PATH,
     run_date: date | None = None,
     fetcher: Callable[..., pd.DataFrame] = fetch_a_share_history,
+    minute_fetcher: Callable[[str, date, str], pd.DataFrame] = fetch_provisional_daily_bar,
 ) -> list[SignalResult]:
     """Fetch and evaluate each enabled configuration once."""
     today = run_date or datetime.now(SHANGHAI).date()
     start = today - timedelta(days=550)
     results: list[SignalResult] = []
     for entry in list_watchlist(database_path, enabled_only=True):
+        latest_date: date | None = None
+        source: str | None = None
         try:
             prices = fetcher(
                 entry["symbol"],
@@ -120,25 +123,22 @@ def run_once(
             )
             latest_date = pd.Timestamp(prices["date"].iloc[-1]).date()
             source = str(prices.attrs.get("source", "未知数据源"))
-            if bool(prices.attrs.get("stale", False)) or latest_date != today:
-                results.append(
-                    SignalResult(
-                        symbol=str(entry["symbol"]),
-                        name=str(entry["name"]),
-                        strategy_id=str(entry["strategy_id"]),
-                        action="数据尚未更新",
-                        close=None,
-                        reason=f"最新有效日线为 {latest_date:%Y-%m-%d}，尚未取得今日收盘数据。",
-                        status="等待数据",
-                        data_date=latest_date,
-                        source=source,
-                    )
-                )
+            if not bool(prices.attrs.get("stale", False)) and latest_date == today:
+                evaluated = evaluate_entry(entry, prices)
+                results.append(replace(evaluated, source=source, data_date=latest_date))
                 continue
-            evaluated = evaluate_entry(entry, prices)
+
+            provisional_prices, provisional_source = _with_provisional_daily_bar(
+                entry, prices, today, start, fetcher, minute_fetcher
+            )
+            evaluated = evaluate_entry(entry, provisional_prices)
             results.append(
-                SignalResult(
-                    **{**evaluated.__dict__, "source": source, "data_date": latest_date}
+                replace(
+                    evaluated,
+                    status="预估",
+                    data_date=today,
+                    source=provisional_source,
+                    reason=f"{evaluated.reason} 该结果由 15:00 分钟行情聚合，待正式日线确认。",
                 )
             )
         except Exception as exc:
@@ -147,15 +147,53 @@ def run_once(
                     symbol=str(entry["symbol"]),
                     name=str(entry["name"]),
                     strategy_id=str(entry["strategy_id"]),
-                    action="运行失败",
+                    action="数据尚未更新",
                     close=None,
-                    reason=str(exc),
-                    status="失败",
-                    data_date=None,
-                    source=None,
+                    reason=f"正式日线尚未可用，分钟线临时日线也无法确认：{exc}",
+                    status="等待数据",
+                    data_date=latest_date,
+                    source=source,
                 )
             )
     return results
+
+
+def _with_provisional_daily_bar(
+    entry: dict[str, Any],
+    prices: pd.DataFrame,
+    today: date,
+    start: date,
+    fetcher: Callable[..., pd.DataFrame],
+    minute_fetcher: Callable[[str, date, str], pd.DataFrame],
+) -> tuple[pd.DataFrame, str]:
+    base = prices.loc[pd.to_datetime(prices["date"]).dt.date < today].copy()
+    if base.empty:
+        raise ValueError("缺少昨日及以前的日线，无法计算临时日线策略")
+    provisional = minute_fetcher(entry["symbol"], today, entry["instrument_type"])
+    if provisional.empty:
+        raise ValueError("分钟行情未能生成临时日线")
+    source = str(provisional.attrs.get("source", "分钟行情"))
+
+    if entry["adjust"]:
+        raw = fetcher(
+            entry["symbol"],
+            start,
+            today,
+            "",
+            instrument_type=entry["instrument_type"],
+        )
+        previous_date = pd.Timestamp(base["date"].iloc[-1]).date()
+        raw_previous = raw.loc[pd.to_datetime(raw["date"]).dt.date == previous_date]
+        if raw_previous.empty or float(raw_previous["close"].iloc[-1]) <= 0:
+            raise ValueError("无法取得与复权日线对应的昨日原始价格")
+        factor = float(base["close"].iloc[-1]) / float(raw_previous["close"].iloc[-1])
+        provisional = provisional.copy()
+        for column in ["open", "high", "low", "close"]:
+            provisional[column] *= factor
+        source += "（按昨日复权系数换算）"
+
+    combined = pd.concat([base, provisional], ignore_index=True)
+    return combined, source
 
 
 def format_report(results: list[SignalResult]) -> str:
@@ -173,6 +211,8 @@ def format_report(results: list[SignalResult]) -> str:
         )
         if result.data_date:
             lines.append(f"数据日期：{result.data_date:%Y-%m-%d} · 数据源：{result.source}")
+        if result.status == "预估":
+            lines.append("数据口径：15:00 分钟行情聚合的临时日线，待正式日线确认。")
         if result.close is not None:
             lines.append(f"参考收盘价：{result.close:.3f}")
         lines.extend([f"原因：{result.reason}", ""])

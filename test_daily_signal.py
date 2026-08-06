@@ -48,6 +48,7 @@ def test_daily_signal_rejects_stale_data_and_outputs_web_link(tmp_path):
         database_path=tmp_path / "watchlist.db",
         run_date=date(2026, 8, 6),
         fetcher=stale_fetcher,
+        minute_fetcher=lambda *_: (_ for _ in ()).throw(ValueError("分钟线未更新")),
     )
     report = format_report(results)
 
@@ -65,5 +66,34 @@ def test_daily_signal_passes_etf_type_to_data_gateway(tmp_path):
         prices.attrs["stale"] = True
         return prices
 
-    run_once(database_path=tmp_path / "watchlist.db", run_date=date(2026, 8, 6), fetcher=fetcher)
+    run_once(
+        database_path=tmp_path / "watchlist.db",
+        run_date=date(2026, 8, 6),
+        fetcher=fetcher,
+        minute_fetcher=lambda *_: (_ for _ in ()).throw(ValueError("分钟线未更新")),
+    )
     assert received["instrument_type"] == "etf"
+
+
+def test_daily_signal_uses_minute_bar_when_official_daily_bar_is_missing(tmp_path):
+    def daily_fetcher(*args, **kwargs):
+        prices = sample_prices().iloc[:-1].copy()
+        prices.attrs["source"] = "测试日线"
+        prices.attrs["stale"] = False
+        return prices
+
+    minute_bar = pd.DataFrame(
+        [{"date": pd.Timestamp("2026-08-06"), "open": 15.0, "high": 15.2, "low": 14.9, "close": 15.1, "volume": 100_000}]
+    )
+    minute_bar.attrs["source"] = "测试分钟线"
+    results = run_once(
+        database_path=tmp_path / "watchlist.db",
+        run_date=date(2026, 8, 6),
+        fetcher=daily_fetcher,
+        minute_fetcher=lambda *_: minute_bar,
+    )
+
+    assert results[0].status == "预估"
+    assert results[0].data_date == date(2026, 8, 6)
+    assert results[0].source == "测试分钟线（按昨日复权系数换算）"
+    assert "临时日线" in format_report(results)

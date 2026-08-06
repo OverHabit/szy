@@ -3,7 +3,12 @@ from datetime import date
 import pandas as pd
 import pytest
 
-from market_data import _default_history_providers, fetch_a_share_history, resolve_a_share
+from market_data import (
+    _default_history_providers,
+    fetch_a_share_history,
+    fetch_provisional_daily_bar,
+    resolve_a_share,
+)
 
 
 STOCKS = pd.DataFrame(
@@ -114,3 +119,43 @@ def test_etf_history_uses_a_separate_provider_chain(tmp_path):
         "东方财富 ETF",
         "新浪财经 ETF（不复权）",
     ]
+
+
+def test_minute_data_can_be_aggregated_into_a_provisional_daily_bar():
+    minutes = pd.DataFrame(
+        {
+            "时间": ["2026-08-06 09:30:00", "2026-08-06 14:59:00", "2026-08-06 15:00:00"],
+            "开盘": [10.0, 10.2, 10.3],
+            "最高": [10.1, 10.4, 10.5],
+            "最低": [9.9, 10.1, 10.2],
+            "收盘": [10.0, 10.3, 10.45],
+            "成交量": [100, 200, 300],
+        }
+    )
+
+    bar = fetch_provisional_daily_bar(
+        "600519", date(2026, 8, 6), "stock", providers=[("测试分钟线", lambda *_: minutes)]
+    )
+
+    assert bar.iloc[0]["close"] == 10.45
+    assert bar.iloc[0]["high"] == 10.5
+    assert bar.iloc[0]["volume"] == 600
+    assert bar.attrs["source"] == "测试分钟线"
+
+
+def test_minute_data_without_1500_bar_is_not_accepted():
+    minutes = pd.DataFrame(
+        {
+            "时间": ["2026-08-06 09:30:00", "2026-08-06 14:59:00"],
+            "开盘": [10.0, 10.2],
+            "最高": [10.1, 10.4],
+            "最低": [9.9, 10.1],
+            "收盘": [10.0, 10.3],
+            "成交量": [100, 200],
+        }
+    )
+
+    with pytest.raises(ConnectionError, match="15:00"):
+        fetch_provisional_daily_bar(
+            "600519", date(2026, 8, 6), "stock", providers=[("测试分钟线", lambda *_: minutes)]
+        )

@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from datetime import date
+from datetime import date, time as clock_time
 from pathlib import Path
 import time
 from typing import Callable, Iterable
@@ -23,6 +23,7 @@ COLUMN_MAP = {
 }
 
 HistoryProvider = Callable[[str, date, date, str], pd.DataFrame]
+MinuteProvider = Callable[[str, date], pd.DataFrame]
 
 
 def fetch_a_share_universe() -> pd.DataFrame:
@@ -177,6 +178,43 @@ def fetch_a_share_history(
     )
 
 
+def fetch_provisional_daily_bar(
+    symbol: str,
+    session_date: date,
+    instrument_type: str,
+    *,
+    providers: Iterable[tuple[str, MinuteProvider]] | None = None,
+) -> pd.DataFrame:
+    """Build one provisional daily bar from same-day one-minute data.
+
+    The bar is only returned when the provider includes the 15:00 close. It
+    is deliberately not cached because the official daily bar remains the
+    source of record once it becomes available.
+    """
+    symbol = symbol.strip()
+    if len(symbol) != 6 or not symbol.isdigit():
+        raise ValueError("股票或 ETF 代码必须为 6 位数字")
+    if instrument_type not in {"stock", "etf"}:
+        raise ValueError("标的类型必须为 stock 或 etf")
+
+    active_providers = (
+        list(providers)
+        if providers is not None
+        else _default_minute_providers(instrument_type)
+    )
+    failures: list[str] = []
+    for source_name, provider in active_providers:
+        try:
+            minutes = _normalise_minute_history(provider(symbol, session_date))
+            bar = _aggregate_minutes_to_daily(minutes, session_date)
+            bar.attrs["source"] = source_name
+            return bar
+        except Exception as exc:
+            failures.append(f"{source_name}: {type(exc).__name__}")
+    details = "；".join(failures) if failures else "没有可用分钟数据源"
+    raise ConnectionError(f"无法取得包含 15:00 收盘的分钟行情（{details}）")
+
+
 def _default_history_providers(
     instrument_type: str = "stock",
 ) -> list[tuple[str, HistoryProvider]]:
@@ -190,6 +228,14 @@ def _default_history_providers(
         ("腾讯证券", _fetch_history_tencent),
         ("新浪财经", _fetch_history_sina),
     ]
+
+
+def _default_minute_providers(
+    instrument_type: str,
+) -> list[tuple[str, MinuteProvider]]:
+    if instrument_type == "etf":
+        return [("东方财富 ETF 分钟线", _fetch_etf_minute_eastmoney)]
+    return [("东方财富 A 股分钟线", _fetch_stock_minute_eastmoney)]
 
 
 def _fetch_history_eastmoney(
@@ -246,6 +292,30 @@ def _fetch_etf_history_sina(
     return ak.fund_etf_hist_sina(symbol=_market_symbol(symbol))
 
 
+def _fetch_stock_minute_eastmoney(symbol: str, session_date: date) -> pd.DataFrame:
+    start = f"{session_date:%Y-%m-%d} 09:30:00"
+    end = f"{session_date:%Y-%m-%d} 15:05:00"
+    return ak.stock_zh_a_hist_min_em(
+        symbol=symbol,
+        start_date=start,
+        end_date=end,
+        period="1",
+        adjust="",
+    )
+
+
+def _fetch_etf_minute_eastmoney(symbol: str, session_date: date) -> pd.DataFrame:
+    start = f"{session_date:%Y-%m-%d} 09:30:00"
+    end = f"{session_date:%Y-%m-%d} 15:05:00"
+    return ak.fund_etf_hist_min_em(
+        symbol=symbol,
+        start_date=start,
+        end_date=end,
+        period="1",
+        adjust="",
+    )
+
+
 def _market_symbol(symbol: str) -> str:
     if symbol.startswith(("4", "8", "9")):
         return f"bj{symbol}"
@@ -274,6 +344,43 @@ def _normalise_history(raw: pd.DataFrame) -> pd.DataFrame:
         .drop_duplicates(subset=["date"], keep="last")
         .sort_values("date")
         .reset_index(drop=True)
+    )
+
+
+def _normalise_minute_history(raw: pd.DataFrame) -> pd.DataFrame:
+    if raw.empty:
+        raise ValueError("未返回分钟行情")
+    data = raw.rename(columns={**COLUMN_MAP, "时间": "timestamp"}).copy()
+    needed = ["timestamp", "open", "high", "low", "close", "volume"]
+    missing = set(needed).difference(data.columns)
+    if missing:
+        raise ValueError(f"分钟行情缺少字段: {', '.join(sorted(missing))}")
+    data["timestamp"] = pd.to_datetime(data["timestamp"])
+    for column in ["open", "high", "low", "close", "volume"]:
+        data[column] = pd.to_numeric(data[column], errors="coerce")
+    return data.dropna(subset=needed).sort_values("timestamp").reset_index(drop=True)
+
+
+def _aggregate_minutes_to_daily(minutes: pd.DataFrame, session_date: date) -> pd.DataFrame:
+    session = minutes.loc[minutes["timestamp"].dt.date == session_date].copy()
+    if session.empty:
+        raise ValueError("分钟行情不包含当天数据")
+    session = session.sort_values("timestamp").reset_index(drop=True)
+    if session["timestamp"].iloc[-1].time() < clock_time(15, 0):
+        raise ValueError("分钟行情尚未包含 15:00 收盘数据")
+    opening = session.loc[session["open"] > 0, "open"]
+    open_price = float(opening.iloc[0]) if not opening.empty else float(session["close"].iloc[0])
+    return pd.DataFrame(
+        [
+            {
+                "date": pd.Timestamp(session_date),
+                "open": open_price,
+                "high": float(session["high"].max()),
+                "low": float(session["low"].min()),
+                "close": float(session["close"].iloc[-1]),
+                "volume": float(session["volume"].sum()),
+            }
+        ]
     )
 
 
