@@ -9,6 +9,7 @@ from plotly.subplots import make_subplots
 
 from market_data import fetch_a_share_history, resolve_a_share
 from quant_core import BacktestMetrics, run_ma_crossover, run_volume_breakout
+from watchlist_ui import render_watchlist_page
 
 
 STRATEGIES = {
@@ -99,6 +100,13 @@ st.markdown(
     """,
     unsafe_allow_html=True,
 )
+
+with st.sidebar:
+    page = st.radio("功能", ["单股回测", "自选信号"], horizontal=True)
+
+if page == "自选信号":
+    render_watchlist_page()
+    st.stop()
 
 
 @st.cache_data(ttl=3600, show_spinner=False)
