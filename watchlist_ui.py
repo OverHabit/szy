@@ -38,6 +38,7 @@ def render_watchlist_page() -> None:
                 {
                     "代码": entry["symbol"],
                     "名称": entry["name"] or "—",
+                    "类型": "ETF" if entry["instrument_type"] == "etf" else "A 股",
                     "策略": STRATEGIES[entry["strategy_id"]],
                     "状态": "启用" if entry["enabled"] else "暂停",
                 }
@@ -47,7 +48,7 @@ def render_watchlist_page() -> None:
         st.dataframe(overview, width="stretch", hide_index=True)
 
     with st.expander("添加股票或 ETF 策略", expanded=not entries):
-        _entry_form("new", {**DEFAULT_PARAMETERS, "enabled": True, "name": "", "symbol": "", "strategy_id": "ma_crossover"})
+        _entry_form("new", {**DEFAULT_PARAMETERS, "enabled": True, "name": "", "symbol": "", "instrument_type": "stock", "strategy_id": "ma_crossover"})
 
     st.subheader("编辑已有配置")
     for entry in entries:
@@ -68,6 +69,13 @@ def _entry_form(form_key: str, entry: dict[str, Any]) -> None:
         name = right.text_input(
             "显示名称（可选）", value=str(entry.get("name", "")),
             help="用于网页和邮件显示；不影响行情查询。",
+        )
+        instrument_type = st.selectbox(
+            "标的类型",
+            options=["stock", "etf"],
+            format_func=lambda value: "普通 A 股" if value == "stock" else "ETF",
+            index=["stock", "etf"].index(entry.get("instrument_type", "stock")),
+            help="ETF 会使用专用 ETF 日线接口；普通股票使用 A 股行情接口。",
         )
         enabled = st.checkbox("启用此项配置", value=bool(entry.get("enabled", True)))
         strategy_id = st.selectbox(
@@ -103,6 +111,7 @@ def _entry_form(form_key: str, entry: dict[str, Any]) -> None:
                     **values,
                     "symbol": symbol,
                     "name": name,
+                    "instrument_type": instrument_type,
                     "enabled": enabled,
                     "strategy_id": strategy_id,
                     "adjust": {"前复权": "qfq", "不复权": "", "后复权": "hfq"}[adjust_label],

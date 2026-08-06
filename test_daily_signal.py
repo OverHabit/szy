@@ -38,7 +38,7 @@ def test_ma_signal_reports_current_holding_state():
 
 
 def test_daily_signal_rejects_stale_data_and_outputs_web_link(tmp_path):
-    def stale_fetcher(*args):
+    def stale_fetcher(*args, **kwargs):
         prices = sample_prices()
         prices.attrs["source"] = "测试源"
         prices.attrs["stale"] = True
@@ -53,3 +53,17 @@ def test_daily_signal_rejects_stale_data_and_outputs_web_link(tmp_path):
 
     assert results[0].action == "数据尚未更新"
     assert "https://9s5ky5xuwk4ohrjj5sdk8t.streamlit.app" in report
+
+
+def test_daily_signal_passes_etf_type_to_data_gateway(tmp_path):
+    received = {}
+
+    def fetcher(*args, **kwargs):
+        received.update(kwargs)
+        prices = sample_prices()
+        prices.attrs["source"] = "测试源"
+        prices.attrs["stale"] = True
+        return prices
+
+    run_once(database_path=tmp_path / "watchlist.db", run_date=date(2026, 8, 6), fetcher=fetcher)
+    assert received["instrument_type"] == "etf"

@@ -113,19 +113,30 @@ def fetch_a_share_history(
     end_date: date,
     adjust: str = "qfq",
     *,
+    instrument_type: str = "stock",
     cache_dir: Path | None = None,
     providers: Iterable[tuple[str, HistoryProvider]] | None = None,
 ) -> pd.DataFrame:
+    """Fetch daily history for a stock or exchange-traded fund.
+
+    ``stock`` uses the existing A-share provider chain. ``etf`` uses the
+    separate ETF endpoints exposed by AKShare; ETF codes cannot be queried
+    reliably through the A-share endpoints.
+    """
     symbol = symbol.strip()
     if len(symbol) != 6 or not symbol.isdigit():
         raise ValueError("股票代码应为 6 位数字，例如 600519")
     if start_date >= end_date:
         raise ValueError("开始日期必须早于结束日期")
+    if instrument_type not in {"stock", "etf"}:
+        raise ValueError("标的类型必须为 stock 或 etf")
 
     target_cache_dir = CACHE_DIR if cache_dir is None else Path(cache_dir)
-    cached = _read_history_cache(target_cache_dir, symbol, adjust)
+    cached = _read_history_cache(target_cache_dir, symbol, adjust, instrument_type)
     active_providers = (
-        list(providers) if providers is not None else _default_history_providers()
+        list(providers)
+        if providers is not None
+        else _default_history_providers(instrument_type)
     )
     failures: list[str] = []
 
@@ -138,7 +149,9 @@ def fetch_a_share_history(
                     raise ValueError("未返回有效行情")
 
                 merged = _merge_history(cached, data)
-                _write_history_cache(target_cache_dir, symbol, adjust, merged)
+                _write_history_cache(
+                    target_cache_dir, symbol, adjust, instrument_type, merged
+                )
                 result = _filter_history(data, start_date, end_date)
                 if result.empty:
                     raise ValueError("指定日期范围内没有交易数据")
@@ -164,7 +177,14 @@ def fetch_a_share_history(
     )
 
 
-def _default_history_providers() -> list[tuple[str, HistoryProvider]]:
+def _default_history_providers(
+    instrument_type: str = "stock",
+) -> list[tuple[str, HistoryProvider]]:
+    if instrument_type == "etf":
+        return [
+            ("东方财富 ETF", _fetch_etf_history_eastmoney),
+            ("新浪财经 ETF（不复权）", _fetch_etf_history_sina),
+        ]
     return [
         ("东方财富", _fetch_history_eastmoney),
         ("腾讯证券", _fetch_history_tencent),
@@ -207,6 +227,25 @@ def _fetch_history_sina(
     )
 
 
+def _fetch_etf_history_eastmoney(
+    symbol: str, start_date: date, end_date: date, adjust: str
+) -> pd.DataFrame:
+    return ak.fund_etf_hist_em(
+        symbol=symbol,
+        period="daily",
+        start_date=start_date.strftime("%Y%m%d"),
+        end_date=end_date.strftime("%Y%m%d"),
+        adjust=adjust,
+    )
+
+
+def _fetch_etf_history_sina(
+    symbol: str, start_date: date, end_date: date, adjust: str
+) -> pd.DataFrame:
+    del start_date, end_date, adjust
+    return ak.fund_etf_hist_sina(symbol=_market_symbol(symbol))
+
+
 def _market_symbol(symbol: str) -> str:
     if symbol.startswith(("4", "8", "9")):
         return f"bj{symbol}"
@@ -238,15 +277,17 @@ def _normalise_history(raw: pd.DataFrame) -> pd.DataFrame:
     )
 
 
-def _cache_path(cache_dir: Path, symbol: str, adjust: str) -> Path:
+def _cache_path(
+    cache_dir: Path, symbol: str, adjust: str, instrument_type: str = "stock"
+) -> Path:
     adjust_name = adjust or "raw"
-    return cache_dir / f"{symbol}_{adjust_name}.csv"
+    return cache_dir / f"{instrument_type}_{symbol}_{adjust_name}.csv"
 
 
 def _read_history_cache(
-    cache_dir: Path, symbol: str, adjust: str
+    cache_dir: Path, symbol: str, adjust: str, instrument_type: str = "stock"
 ) -> pd.DataFrame:
-    path = _cache_path(cache_dir, symbol, adjust)
+    path = _cache_path(cache_dir, symbol, adjust, instrument_type)
     if not path.exists():
         return pd.DataFrame()
     try:
@@ -256,13 +297,17 @@ def _read_history_cache(
 
 
 def _write_history_cache(
-    cache_dir: Path, symbol: str, adjust: str, data: pd.DataFrame
+    cache_dir: Path,
+    symbol: str,
+    adjust: str,
+    instrument_type: str,
+    data: pd.DataFrame,
 ) -> None:
     if data.empty:
         return
     try:
         cache_dir.mkdir(parents=True, exist_ok=True)
-        path = _cache_path(cache_dir, symbol, adjust)
+        path = _cache_path(cache_dir, symbol, adjust, instrument_type)
         temporary = path.with_suffix(".tmp")
         data.to_csv(temporary, index=False, encoding="utf-8")
         temporary.replace(path)

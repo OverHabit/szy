@@ -3,7 +3,7 @@ from datetime import date
 import pandas as pd
 import pytest
 
-from market_data import fetch_a_share_history, resolve_a_share
+from market_data import _default_history_providers, fetch_a_share_history, resolve_a_share
 
 
 STOCKS = pd.DataFrame(
@@ -94,3 +94,23 @@ def test_history_uses_disk_cache_when_all_providers_fail(tmp_path):
     assert cached.attrs["source"].startswith("本地缓存")
     assert cached.attrs["stale"] is True
     assert len(cached) == 4
+
+
+def test_etf_history_uses_a_separate_provider_chain(tmp_path):
+    def etf_provider(*args):
+        return sample_history()
+
+    result = fetch_a_share_history(
+        "588000",
+        date(2024, 1, 1),
+        date(2024, 1, 10),
+        instrument_type="etf",
+        cache_dir=tmp_path,
+        providers=[("ETF 测试源", etf_provider)],
+    )
+
+    assert result.attrs["source"] == "ETF 测试源"
+    assert [name for name, _ in _default_history_providers("etf")] == [
+        "东方财富 ETF",
+        "新浪财经 ETF（不复权）",
+    ]

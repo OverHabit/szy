@@ -15,6 +15,7 @@ from typing import Any
 
 DATABASE_PATH = Path(__file__).resolve().parent / ".data" / "watchlist.db"
 STRATEGY_IDS = {"ma_crossover", "volume_breakout"}
+INSTRUMENT_TYPES = {"stock", "etf"}
 
 DEFAULT_PARAMETERS = {
     "adjust": "qfq",
@@ -45,6 +46,7 @@ def initialise_watchlist(database_path: Path | str | None = None) -> None:
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 symbol TEXT NOT NULL,
                 name TEXT NOT NULL DEFAULT '',
+                instrument_type TEXT NOT NULL DEFAULT 'stock',
                 strategy_id TEXT NOT NULL,
                 enabled INTEGER NOT NULL DEFAULT 1,
                 adjust TEXT NOT NULL DEFAULT 'qfq',
@@ -62,6 +64,18 @@ def initialise_watchlist(database_path: Path | str | None = None) -> None:
 
             """
         )
+        columns = {
+            row["name"]
+            for row in connection.execute("PRAGMA table_info(watchlist_entries)").fetchall()
+        }
+        if "instrument_type" not in columns:
+            connection.execute(
+                "ALTER TABLE watchlist_entries "
+                "ADD COLUMN instrument_type TEXT NOT NULL DEFAULT 'stock'"
+            )
+        connection.execute(
+            "UPDATE watchlist_entries SET instrument_type = 'etf' WHERE symbol = '588000'"
+        )
         existing = connection.execute(
             "SELECT 1 FROM watchlist_entries WHERE symbol = ? AND strategy_id = ?",
             ("588000", "ma_crossover"),
@@ -71,10 +85,10 @@ def initialise_watchlist(database_path: Path | str | None = None) -> None:
             connection.execute(
                 """
                 INSERT INTO watchlist_entries (
-                    symbol, name, strategy_id, enabled, adjust, short_window,
+                    symbol, name, instrument_type, strategy_id, enabled, adjust, short_window,
                     long_window, breakout_window, volume_window, volume_multiple,
                     exit_window, fee_bps, created_at, updated_at
-                ) VALUES (?, ?, ?, 1, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ) VALUES (?, ?, 'etf', ?, 1, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     "588000",
@@ -120,11 +134,11 @@ def save_watchlist_entry(
             cursor = connection.execute(
                 """
                 INSERT INTO watchlist_entries (
-                    symbol, name, strategy_id, enabled, adjust, short_window,
+                    symbol, name, instrument_type, strategy_id, enabled, adjust, short_window,
                     long_window, breakout_window, volume_window, volume_multiple,
                     exit_window, fee_bps, created_at, updated_at
                 ) VALUES (
-                    :symbol, :name, :strategy_id, :enabled, :adjust, :short_window,
+                    :symbol, :name, :instrument_type, :strategy_id, :enabled, :adjust, :short_window,
                     :long_window, :breakout_window, :volume_window, :volume_multiple,
                     :exit_window, :fee_bps, :created_at, :updated_at
                 )
@@ -135,7 +149,8 @@ def save_watchlist_entry(
         connection.execute(
             """
             UPDATE watchlist_entries SET
-                symbol = :symbol, name = :name, strategy_id = :strategy_id,
+                symbol = :symbol, name = :name, instrument_type = :instrument_type,
+                strategy_id = :strategy_id,
                 enabled = :enabled, adjust = :adjust, short_window = :short_window,
                 long_window = :long_window, breakout_window = :breakout_window,
                 volume_window = :volume_window, volume_multiple = :volume_multiple,
@@ -165,6 +180,9 @@ def _validated_entry(entry: dict[str, Any]) -> dict[str, Any]:
     values = {**DEFAULT_PARAMETERS, **entry}
     values["symbol"] = symbol
     values["name"] = str(values.get("name", "")).strip()
+    values["instrument_type"] = str(values.get("instrument_type", "stock"))
+    if values["instrument_type"] not in INSTRUMENT_TYPES:
+        raise ValueError("请选择普通 A 股或 ETF")
     values["strategy_id"] = strategy_id
     values["enabled"] = int(bool(values.get("enabled", True)))
     values["adjust"] = str(values["adjust"])
@@ -184,7 +202,7 @@ def _validated_entry(entry: dict[str, Any]) -> dict[str, Any]:
     if values["fee_bps"] < 0:
         raise ValueError("单边费用不能为负数")
     return {key: values[key] for key in (
-        "symbol", "name", "strategy_id", "enabled", "adjust", "short_window",
+        "symbol", "name", "instrument_type", "strategy_id", "enabled", "adjust", "short_window",
         "long_window", "breakout_window", "volume_window", "volume_multiple",
         "exit_window", "fee_bps",
     )}

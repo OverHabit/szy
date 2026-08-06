@@ -111,7 +111,13 @@ def run_once(
     results: list[SignalResult] = []
     for entry in list_watchlist(database_path, enabled_only=True):
         try:
-            prices = fetcher(entry["symbol"], start, today, entry["adjust"])
+            prices = fetcher(
+                entry["symbol"],
+                start,
+                today,
+                entry["adjust"],
+                instrument_type=entry["instrument_type"],
+            )
             latest_date = pd.Timestamp(prices["date"].iloc[-1]).date()
             source = str(prices.attrs.get("source", "未知数据源"))
             if bool(prices.attrs.get("stale", False)) or latest_date != today:
@@ -174,7 +180,7 @@ def format_report(results: list[SignalResult]) -> str:
         [
             f"查看或调整配置：{APP_URL}",
             "",
-            "仅为策略信号，需人工确认；本工具不会自动下单，历史回测不代表未来表现。",
+            "仅为策略信号，需人工确认；不自动下单，历史回测不代表未来表现。",
         ]
     )
     return "\n".join(lines)
