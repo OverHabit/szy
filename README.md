@@ -12,6 +12,13 @@ python -m streamlit run app.py
 
 浏览器访问 `http://localhost:8501`。
 
+## 免费云端部署（Render）
+
+仓库根目录的 `render.yaml` 已包含 Render Web Service 配置。首次在 Render 控制台
+选择 **New → Blueprint** 并连接本仓库后，平台会自动安装依赖、启动 Streamlit，并在
+后续推送到 `master` 时自动更新。免费实例在 15 分钟无访问后会休眠；再次访问时通常
+需要约一分钟唤醒。
+
 ## 跨设备协作
 
 项目代码、开发约定和进度通过 GitHub 仓库同步：
