@@ -13,6 +13,12 @@ K 线买卖点、策略净值、基准净值、回撤、绩效指标与交易记
 因此，本机网页和云端 Streamlit 各自拥有一份配置；当前优先完成网页管理，后续再单独
 接入 Hermes 定时提醒。
 
+## Hermes 收盘提醒
+
+`daily_signal.py` 会读取本机 `.data/watchlist.db` 内已启用的配置，取得当日日线后输出
+适合直接作为邮件正文的报告。它只生成策略信号，不会自动下单。Hermes 应以
+Script-only / No-agent 模式在工作日 `15:05` 运行它；详细设置见 `PROJECT_STATUS.md`。
+
 ## 启动
 
 ```powershell
