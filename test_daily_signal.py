@@ -37,7 +37,7 @@ def test_ma_signal_reports_current_holding_state():
     assert "短期均线" in result.reason
 
 
-def test_daily_signal_rejects_stale_data_and_outputs_web_link(tmp_path):
+def test_daily_signal_uses_cached_daily_data_and_outputs_web_link(tmp_path):
     def stale_fetcher(*args, **kwargs):
         prices = sample_prices()
         prices.attrs["source"] = "测试源"
@@ -48,11 +48,11 @@ def test_daily_signal_rejects_stale_data_and_outputs_web_link(tmp_path):
         database_path=tmp_path / "watchlist.db",
         run_date=date(2026, 8, 6),
         fetcher=stale_fetcher,
-        minute_fetcher=lambda *_: (_ for _ in ()).throw(ValueError("分钟线未更新")),
     )
     report = format_report(results)
 
-    assert results[0].action == "数据尚未更新"
+    assert results[0].status == "缓存数据"
+    assert results[0].action in {"持有", "观望", "策略买入信号", "策略卖出信号"}
     assert "https://9s5ky5xuwk4ohrjj5sdk8t.streamlit.app" in report
 
 
@@ -70,30 +70,24 @@ def test_daily_signal_passes_etf_type_to_data_gateway(tmp_path):
         database_path=tmp_path / "watchlist.db",
         run_date=date(2026, 8, 6),
         fetcher=fetcher,
-        minute_fetcher=lambda *_: (_ for _ in ()).throw(ValueError("分钟线未更新")),
     )
     assert received == {"stock", "etf"}
 
 
-def test_daily_signal_uses_minute_bar_when_official_daily_bar_is_missing(tmp_path):
+def test_daily_signal_uses_previous_daily_bar_when_official_daily_bar_is_missing(tmp_path):
     def daily_fetcher(*args, **kwargs):
         prices = sample_prices().iloc[:-1].copy()
         prices.attrs["source"] = "测试日线"
         prices.attrs["stale"] = False
         return prices
 
-    minute_bar = pd.DataFrame(
-        [{"date": pd.Timestamp("2026-08-06"), "open": 15.0, "high": 15.2, "low": 14.9, "close": 15.1, "volume": 100_000}]
-    )
-    minute_bar.attrs["source"] = "测试分钟线"
     results = run_once(
         database_path=tmp_path / "watchlist.db",
         run_date=date(2026, 8, 6),
         fetcher=daily_fetcher,
-        minute_fetcher=lambda *_: minute_bar,
     )
 
-    assert results[0].status == "预估"
-    assert results[0].data_date == date(2026, 8, 6)
-    assert results[0].source == "测试分钟线（按昨日复权系数换算）"
-    assert "临时日线" in format_report(results)
+    assert results[0].status == "上一交易日"
+    assert results[0].data_date == date(2026, 8, 5)
+    assert results[0].source == "测试日线"
+    assert "上一交易日日线" in format_report(results)
