@@ -7,6 +7,8 @@ from typing import Callable, Iterable
 
 import akshare as ak
 import pandas as pd
+import requests
+from akshare.utils import demjson
 
 
 CACHE_DIR = Path(__file__).resolve().parent / ".cache" / "market_data"
@@ -220,6 +222,7 @@ def _default_history_providers(
 ) -> list[tuple[str, HistoryProvider]]:
     if instrument_type == "etf":
         return [
+            ("腾讯证券 ETF", _fetch_etf_history_tencent),
             ("东方财富 ETF", _fetch_etf_history_eastmoney),
             ("新浪财经 ETF（不复权）", _fetch_etf_history_sina),
         ]
@@ -289,7 +292,51 @@ def _fetch_etf_history_sina(
     symbol: str, start_date: date, end_date: date, adjust: str
 ) -> pd.DataFrame:
     del start_date, end_date, adjust
-    return ak.fund_etf_hist_sina(symbol=_market_symbol(symbol))
+    return ak.fund_etf_hist_sina(symbol=_etf_market_symbol(symbol))
+
+
+def _fetch_etf_history_tencent(
+    symbol: str, start_date: date, end_date: date, adjust: str
+) -> pd.DataFrame:
+    """Fetch ETF K-lines from Tencent without AKShare's fixed-column assumption.
+
+    Tencent occasionally omits turnover and amount for ETFs.  AKShare's stock
+    wrapper then indexes missing columns and raises ``IndexError``, even though
+    the essential date/OHLCV rows are present.  The strategy engine only needs
+    those six fields, so parse them directly and leave optional fields aside.
+    """
+    market_symbol = _etf_market_symbol(symbol)
+    records: list[list[object]] = []
+    for year in range(start_date.year, end_date.year + 1):
+        response = requests.get(
+            "https://proxy.finance.qq.com/ifzqgtimg/appstock/app/newfqkline/get",
+            params={
+                "_var": f"kline_day{adjust}{year}",
+                "param": f"{market_symbol},day,{year}-01-01,{year + 1}-12-31,640,{adjust}",
+                "r": "0.8205512681390605",
+            },
+            timeout=15,
+        )
+        response.raise_for_status()
+        raw = response.text
+        payload_start = raw.find("={")
+        if payload_start < 0:
+            raise ValueError("腾讯证券未返回可解析的 K 线数据")
+        decoded = demjson.decode(raw[payload_start + 1 :])
+        data = decoded["data"][market_symbol]
+        rows = data.get("qfqday") or data.get("hfqday") or data.get("day")
+        if not rows:
+            continue
+        records.extend(rows)
+
+    if not records:
+        return pd.DataFrame(columns=["date", "open", "close", "high", "low", "volume"])
+    frame = pd.DataFrame(records)
+    if frame.shape[1] < 6:
+        raise ValueError("腾讯证券 ETF K 线缺少 OHLCV 字段")
+    frame = frame.iloc[:, :6].copy()
+    frame.columns = ["date", "open", "close", "high", "low", "volume"]
+    return frame
 
 
 def _fetch_stock_minute_eastmoney(symbol: str, session_date: date) -> pd.DataFrame:
@@ -320,6 +367,13 @@ def _market_symbol(symbol: str) -> str:
     if symbol.startswith(("4", "8", "9")):
         return f"bj{symbol}"
     if symbol.startswith("6"):
+        return f"sh{symbol}"
+    return f"sz{symbol}"
+
+
+def _etf_market_symbol(symbol: str) -> str:
+    """Return the correct exchange prefix for mainland exchange-traded funds."""
+    if symbol.startswith(("5", "6")):
         return f"sh{symbol}"
     return f"sz{symbol}"
 

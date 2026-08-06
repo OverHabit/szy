@@ -5,6 +5,7 @@ import pytest
 
 from market_data import (
     _default_history_providers,
+    _etf_market_symbol,
     fetch_a_share_history,
     fetch_provisional_daily_bar,
     resolve_a_share,
@@ -25,6 +26,11 @@ def test_resolves_stock_by_code():
 
 def test_code_does_not_need_stock_list_request():
     assert resolve_a_share("600519") == ("600519", "600519")
+
+
+def test_etf_market_symbol_uses_the_correct_exchange_prefix():
+    assert _etf_market_symbol("588000") == "sh588000"
+    assert _etf_market_symbol("159915") == "sz159915"
 
 
 def test_resolves_stock_by_exact_name():
@@ -116,6 +122,7 @@ def test_etf_history_uses_a_separate_provider_chain(tmp_path):
 
     assert result.attrs["source"] == "ETF 测试源"
     assert [name for name, _ in _default_history_providers("etf")] == [
+        "腾讯证券 ETF",
         "东方财富 ETF",
         "新浪财经 ETF（不复权）",
     ]
