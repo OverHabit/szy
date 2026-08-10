@@ -65,8 +65,10 @@ def render_watchlist_page() -> None:
                 "参考收盘价": st.column_config.NumberColumn(format="%.3f"),
             },
         )
+        if "状态" in results and (results["状态"] == "预估").any():
+            st.info("“预估”表示正式日线尚未更新，已使用 15:00 后实时收盘行情计算；正式日线到位后会优先采用正式数据。")
         if "状态" in results and (results["状态"] == "等待数据").any():
-            st.warning("部分标的尚无可用行情。可稍后再试；“预估”表示使用含 15:00 的分钟行情临时计算，待正式日线确认。")
+            st.warning("部分标的尚无可用日线或实时行情。可稍后再试。")
 
     with st.expander("添加股票或 ETF 策略", expanded=not entries):
         _entry_form("new", {**DEFAULT_PARAMETERS, "enabled": True, "name": "", "symbol": "", "instrument_type": "stock", "strategy_id": "ma_crossover"})

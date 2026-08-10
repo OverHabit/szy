@@ -26,6 +26,7 @@ COLUMN_MAP = {
 
 HistoryProvider = Callable[[str, date, date, str], pd.DataFrame]
 MinuteProvider = Callable[[str, date], pd.DataFrame]
+RealtimeProvider = Callable[[str, date], pd.DataFrame]
 
 
 def fetch_a_share_universe() -> pd.DataFrame:
@@ -217,6 +218,45 @@ def fetch_provisional_daily_bar(
     raise ConnectionError(f"无法取得包含 15:00 收盘的分钟行情（{details}）")
 
 
+def fetch_realtime_daily_bar(
+    symbol: str,
+    session_date: date,
+    instrument_type: str,
+    *,
+    providers: Iterable[tuple[str, RealtimeProvider]] | None = None,
+) -> pd.DataFrame:
+    """Return a same-day provisional bar built from a post-close live quote.
+
+    It is not written to the daily cache.  Official daily data remains the
+    source of record, while this quote keeps a closing signal timely when
+    distributors have not yet updated their historical daily endpoint.
+    """
+    symbol = symbol.strip()
+    if len(symbol) != 6 or not symbol.isdigit():
+        raise ValueError("股票或 ETF 代码必须为 6 位数字")
+    if instrument_type not in {"stock", "etf"}:
+        raise ValueError("标的类型必须为 stock 或 etf")
+
+    active_providers = (
+        list(providers)
+        if providers is not None
+        else _default_realtime_providers(instrument_type)
+    )
+    failures: list[str] = []
+    for source_name, provider in active_providers:
+        try:
+            bar = _normalise_history(provider(symbol, session_date))
+            bar = bar.loc[pd.to_datetime(bar["date"]).dt.date == session_date].copy()
+            if bar.empty:
+                raise ValueError("实时行情不包含当天收盘数据")
+            bar.attrs["source"] = source_name
+            return bar.reset_index(drop=True)
+        except Exception as exc:
+            failures.append(f"{source_name}: {type(exc).__name__}")
+    details = "；".join(failures) if failures else "没有可用实时行情源"
+    raise ConnectionError(f"无法取得当日实时收盘行情（{details}）")
+
+
 def _default_history_providers(
     instrument_type: str = "stock",
 ) -> list[tuple[str, HistoryProvider]]:
@@ -239,6 +279,14 @@ def _default_minute_providers(
     if instrument_type == "etf":
         return [("东方财富 ETF 分钟线", _fetch_etf_minute_eastmoney)]
     return [("东方财富 A 股分钟线", _fetch_stock_minute_eastmoney)]
+
+
+def _default_realtime_providers(
+    instrument_type: str,
+) -> list[tuple[str, RealtimeProvider]]:
+    if instrument_type == "etf":
+        return [("腾讯证券 ETF 实时行情", _fetch_etf_realtime_tencent)]
+    return [("腾讯证券 A 股实时行情", _fetch_stock_realtime_tencent)]
 
 
 def _fetch_history_eastmoney(
@@ -337,6 +385,51 @@ def _fetch_etf_history_tencent(
     frame = frame.iloc[:, :6].copy()
     frame.columns = ["date", "open", "close", "high", "low", "volume"]
     return frame
+
+
+def _fetch_stock_realtime_tencent(symbol: str, session_date: date) -> pd.DataFrame:
+    return _fetch_tencent_realtime_quote(
+        _market_symbol(symbol), session_date, volume_multiplier=100.0
+    )
+
+
+def _fetch_etf_realtime_tencent(symbol: str, session_date: date) -> pd.DataFrame:
+    return _fetch_tencent_realtime_quote(
+        _etf_market_symbol(symbol), session_date, volume_multiplier=1.0
+    )
+
+
+def _fetch_tencent_realtime_quote(
+    market_symbol: str, session_date: date, *, volume_multiplier: float
+) -> pd.DataFrame:
+    """Normalise Tencent's low-latency quote fields into one daily bar."""
+    response = requests.get(
+        f"https://qt.gtimg.cn/q={market_symbol}", timeout=15
+    )
+    response.raise_for_status()
+    parts = response.text.split('"')
+    if len(parts) < 2:
+        raise ValueError("腾讯证券未返回可解析的实时行情")
+    fields = parts[1].split("~")
+    if len(fields) <= 34:
+        raise ValueError("腾讯证券实时行情字段不完整")
+    timestamp = pd.to_datetime(fields[30], format="%Y%m%d%H%M%S", errors="coerce")
+    if pd.isna(timestamp) or timestamp.date() != session_date:
+        raise ValueError("腾讯证券实时行情不是当前交易日")
+    if timestamp.time() < clock_time(15, 0):
+        raise ValueError("腾讯证券实时行情尚未达到收盘时点")
+    values = {
+        "date": pd.Timestamp(session_date),
+        "open": float(fields[5]),
+        "high": float(fields[33]),
+        "low": float(fields[34]),
+        "close": float(fields[3]),
+        "volume": float(fields[6]) * volume_multiplier,
+        "previous_close": float(fields[4]),
+    }
+    if min(values["open"], values["high"], values["low"], values["close"], values["volume"]) <= 0:
+        raise ValueError("腾讯证券实时行情存在无效 OHLCV 值")
+    return pd.DataFrame([values])
 
 
 def _fetch_stock_minute_eastmoney(symbol: str, session_date: date) -> pd.DataFrame:

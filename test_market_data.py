@@ -8,6 +8,7 @@ from market_data import (
     _etf_market_symbol,
     fetch_a_share_history,
     fetch_provisional_daily_bar,
+    fetch_realtime_daily_bar,
     resolve_a_share,
 )
 
@@ -166,3 +167,27 @@ def test_minute_data_without_1500_bar_is_not_accepted():
         fetch_provisional_daily_bar(
             "600519", date(2026, 8, 6), "stock", providers=[("测试分钟线", lambda *_: minutes)]
         )
+
+
+def test_realtime_quote_can_be_used_as_a_same_day_provisional_bar():
+    quote = pd.DataFrame(
+        [
+            {
+                "date": pd.Timestamp("2026-08-06"),
+                "open": 10.0,
+                "high": 10.5,
+                "low": 9.9,
+                "close": 10.45,
+                "volume": 600,
+                "previous_close": 10.1,
+            }
+        ]
+    )
+
+    bar = fetch_realtime_daily_bar(
+        "600519", date(2026, 8, 6), "stock", providers=[("测试实时行情", lambda *_: quote)]
+    )
+
+    assert bar.iloc[0]["close"] == 10.45
+    assert bar.iloc[0]["previous_close"] == 10.1
+    assert bar.attrs["source"] == "测试实时行情"

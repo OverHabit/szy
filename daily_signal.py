@@ -16,7 +16,7 @@ from zoneinfo import ZoneInfo
 
 import pandas as pd
 
-from market_data import fetch_a_share_history
+from market_data import fetch_a_share_history, fetch_realtime_daily_bar
 from quant_core import run_ma_crossover, run_volume_breakout
 from watchlist_store import DATABASE_PATH, list_watchlist
 
@@ -104,11 +104,12 @@ def run_once(
     database_path=DATABASE_PATH,
     run_date: date | None = None,
     fetcher: Callable[..., pd.DataFrame] = fetch_a_share_history,
+    realtime_fetcher: Callable[[str, date, str], pd.DataFrame] = fetch_realtime_daily_bar,
 ) -> list[SignalResult]:
     """Fetch and evaluate each enabled configuration once.
 
-    Formal daily bars always win. If today's bar is delayed, evaluate the most
-    recent available daily bar instead of mixing it with intraday data.
+    Formal daily bars always win. If today's bar is delayed, use a post-close
+    real-time quote as a clearly labelled provisional bar.
     """
     today = run_date or datetime.now(SHANGHAI).date()
     start = today - timedelta(days=550)
@@ -131,22 +132,40 @@ def run_once(
                 results.append(replace(evaluated, source=source, data_date=latest_date))
                 continue
 
-            evaluated = evaluate_entry(entry, prices)
-            if latest_date < today:
-                status = "上一交易日"
-                suffix = f"正式当日日线尚未更新，按 {latest_date:%Y-%m-%d} 日线计算。"
-            else:
-                status = "缓存数据"
-                suffix = "本次未取得新的正式日线，按本地缓存的该日期日线计算。"
-            results.append(
-                replace(
-                    evaluated,
-                    status=status,
-                    source=source,
-                    data_date=latest_date,
-                    reason=f"{evaluated.reason} {suffix}",
+            try:
+                realtime = realtime_fetcher(
+                    entry["symbol"], today, entry["instrument_type"]
                 )
-            )
+                provisional, provisional_source = _with_realtime_bar(
+                    entry, prices, realtime, today, start, fetcher
+                )
+                evaluated = evaluate_entry(entry, provisional)
+                results.append(
+                    replace(
+                        evaluated,
+                        status="预估",
+                        data_date=today,
+                        source=provisional_source,
+                        reason=f"{evaluated.reason} 当日正式日线尚未更新，按实时收盘行情预估，待正式日线确认。",
+                    )
+                )
+            except Exception as realtime_error:
+                evaluated = evaluate_entry(entry, prices)
+                status = "上一交易日" if latest_date < today else "缓存数据"
+                suffix = (
+                    f"正式当日日线和实时行情均未可用，按 {latest_date:%Y-%m-%d} 日线计算。"
+                    if latest_date < today
+                    else "本次未取得新的正式日线或实时行情，按本地缓存日线计算。"
+                )
+                results.append(
+                    replace(
+                        evaluated,
+                        status=status,
+                        source=source,
+                        data_date=latest_date,
+                        reason=f"{evaluated.reason} {suffix} 实时行情错误：{type(realtime_error).__name__}。",
+                    )
+                )
         except Exception as exc:
             results.append(
                 SignalResult(
@@ -162,6 +181,41 @@ def run_once(
                 )
             )
     return results
+
+
+def _with_realtime_bar(
+    entry: dict[str, Any],
+    prices: pd.DataFrame,
+    realtime: pd.DataFrame,
+    today: date,
+    start: date,
+    fetcher: Callable[..., pd.DataFrame],
+) -> tuple[pd.DataFrame, str]:
+    base = prices.loc[pd.to_datetime(prices["date"]).dt.date < today].copy()
+    if base.empty:
+        raise ValueError("缺少昨日及以前的日线，无法计算实时预估")
+    source = str(realtime.attrs.get("source", "实时行情"))
+    provisional = realtime.copy()
+    if entry["adjust"]:
+        previous_quote = pd.to_numeric(
+            provisional.get("previous_close", pd.Series(dtype=float)), errors="coerce"
+        )
+        if not previous_quote.empty and float(previous_quote.iloc[0]) > 0:
+            previous_raw_close = float(previous_quote.iloc[0])
+        else:
+            raw = fetcher(
+                entry["symbol"], start, today, "", instrument_type=entry["instrument_type"]
+            )
+            previous_date = pd.Timestamp(base["date"].iloc[-1]).date()
+            raw_previous = raw.loc[pd.to_datetime(raw["date"]).dt.date == previous_date]
+            if raw_previous.empty or float(raw_previous["close"].iloc[-1]) <= 0:
+                raise ValueError("无法取得与复权日线对应的昨日原始价格")
+            previous_raw_close = float(raw_previous["close"].iloc[-1])
+        factor = float(base["close"].iloc[-1]) / previous_raw_close
+        for column in ["open", "high", "low", "close"]:
+            provisional[column] *= factor
+        source += "（按昨日复权系数换算）"
+    return pd.concat([base, provisional], ignore_index=True), source
 
 
 def format_report(results: list[SignalResult]) -> str:
@@ -180,7 +234,7 @@ def format_report(results: list[SignalResult]) -> str:
         if result.data_date:
             lines.append(f"数据日期：{result.data_date:%Y-%m-%d} · 数据源：{result.source}")
         if result.status == "预估":
-            lines.append("数据口径：15:00 分钟行情聚合的临时日线，待正式日线确认。")
+            lines.append("数据口径：15:00 后实时收盘行情预估，待正式日线确认。")
         elif result.status == "上一交易日":
             lines.append("数据口径：正式当日日线尚未更新，按上一交易日日线计算。")
         elif result.status == "缓存数据":
