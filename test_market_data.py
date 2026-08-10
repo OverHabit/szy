@@ -180,6 +180,7 @@ def test_realtime_quote_can_be_used_as_a_same_day_provisional_bar():
                 "close": 10.45,
                 "volume": 600,
                 "previous_close": 10.1,
+                "quote_timestamp": pd.Timestamp("2026-08-06 15:00:08"),
             }
         ]
     )
@@ -190,4 +191,5 @@ def test_realtime_quote_can_be_used_as_a_same_day_provisional_bar():
 
     assert bar.iloc[0]["close"] == 10.45
     assert bar.iloc[0]["previous_close"] == 10.1
+    assert bar.iloc[0]["quote_timestamp"] == pd.Timestamp("2026-08-06 15:00:08")
     assert bar.attrs["source"] == "测试实时行情"

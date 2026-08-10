@@ -37,6 +37,7 @@ class SignalResult:
     status: str
     data_date: date | None
     source: str | None
+    realtime_at: datetime | None = None
 
 
 def evaluate_entry(entry: dict[str, Any], prices: pd.DataFrame) -> SignalResult:
@@ -146,6 +147,7 @@ def run_once(
                         status="预估",
                         data_date=today,
                         source=provisional_source,
+                        realtime_at=_realtime_timestamp(realtime),
                         reason=f"{evaluated.reason} 当日正式日线尚未更新，按实时收盘行情预估，待正式日线确认。",
                     )
                 )
@@ -181,6 +183,13 @@ def run_once(
                 )
             )
     return results
+
+
+def _realtime_timestamp(realtime: pd.DataFrame) -> datetime | None:
+    if "quote_timestamp" not in realtime.columns or realtime.empty:
+        return None
+    timestamp = pd.to_datetime(realtime["quote_timestamp"].iloc[-1], errors="coerce")
+    return None if pd.isna(timestamp) else timestamp.to_pydatetime()
 
 
 def _with_realtime_bar(
@@ -233,6 +242,8 @@ def format_report(results: list[SignalResult]) -> str:
         )
         if result.data_date:
             lines.append(f"数据日期：{result.data_date:%Y-%m-%d} · 数据源：{result.source}")
+        if result.realtime_at:
+            lines.append(f"实时价格时刻：{result.realtime_at:%Y-%m-%d %H:%M:%S}")
         if result.status == "预估":
             lines.append("数据口径：15:00 后实时收盘行情预估，待正式日线确认。")
         elif result.status == "上一交易日":

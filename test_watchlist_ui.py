@@ -1,4 +1,4 @@
-from datetime import date
+from datetime import date, datetime
 
 from daily_signal import SignalResult
 from watchlist_ui import _signal_results_frame
@@ -17,6 +17,7 @@ def test_signal_results_frame_shows_runner_details() -> None:
                 status="预估",
                 data_date=date(2026, 8, 6),
                 source="东方财富 1 分钟行情",
+                realtime_at=datetime(2026, 8, 6, 15, 1, 12),
             )
         ]
     )
@@ -29,6 +30,7 @@ def test_signal_results_frame_shows_runner_details() -> None:
             "信号": "持有",
             "状态": "预估",
             "数据日期": "2026-08-06",
+            "实时价格时刻": "2026-08-06 15:01:12",
             "参考收盘价": 1.234,
             "数据源": "东方财富 1 分钟行情",
             "说明": "短期均线高于长期均线。",

@@ -93,6 +93,7 @@ def _signal_results_frame(results: list[SignalResult]) -> pd.DataFrame:
                 "信号": result.action,
                 "状态": result.status,
                 "数据日期": result.data_date.isoformat() if result.data_date else "—",
+                "实时价格时刻": result.realtime_at.strftime("%Y-%m-%d %H:%M:%S") if result.realtime_at else "—",
                 "参考收盘价": result.close,
                 "数据源": result.source or "—",
                 "说明": result.reason,

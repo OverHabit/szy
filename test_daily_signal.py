@@ -31,6 +31,7 @@ def sample_realtime_bar() -> pd.DataFrame:
                 "close": 15.1,
                 "volume": 100_000,
                 "previous_close": 15.0,
+                "quote_timestamp": pd.Timestamp("2026-08-06 15:01:12"),
             }
         ]
     )
@@ -73,6 +74,7 @@ def test_daily_signal_uses_realtime_quote_when_daily_data_is_stale(tmp_path):
     assert results[0].status == "预估"
     assert results[0].data_date == date(2026, 8, 6)
     assert results[0].source == "测试实时行情（按昨日复权系数换算）"
+    assert results[0].realtime_at == pd.Timestamp("2026-08-06 15:01:12").to_pydatetime()
     assert results[0].action in {"持有", "观望", "策略买入信号", "策略卖出信号"}
     assert "https://9s5ky5xuwk4ohrjj5sdk8t.streamlit.app" in report
 
@@ -114,3 +116,4 @@ def test_daily_signal_uses_realtime_quote_when_official_daily_bar_is_missing(tmp
     assert results[0].data_date == date(2026, 8, 6)
     assert results[0].source == "测试实时行情（按昨日复权系数换算）"
     assert "实时收盘行情预估" in format_report(results)
+    assert "实时价格时刻：2026-08-06 15:01:12" in format_report(results)

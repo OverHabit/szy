@@ -420,6 +420,7 @@ def _fetch_tencent_realtime_quote(
         raise ValueError("腾讯证券实时行情尚未达到收盘时点")
     values = {
         "date": pd.Timestamp(session_date),
+        "quote_timestamp": timestamp,
         "open": float(fields[5]),
         "high": float(fields[33]),
         "low": float(fields[34]),
