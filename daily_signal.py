@@ -1,17 +1,14 @@
-"""Create an email-ready daily report from the locally managed watchlist.
+"""Create a report for WorkBuddy from the locally managed watchlist.
 
-This script has no email password and never places an order. Hermes runs it as
-a script-only task, then delivers its standard output through the already
-configured email channel.
+The script only prints the report. It contains no mail credentials and never
+places an order; WorkBuddy is responsible for scheduling and mail delivery.
 """
 
 from __future__ import annotations
 
-import argparse
 from dataclasses import dataclass, replace
-from datetime import date, datetime, time as clock_time, timedelta
+from datetime import date, datetime, timedelta
 from pathlib import Path
-import time
 from typing import Any, Callable, Iterable
 from zoneinfo import ZoneInfo
 
@@ -26,14 +23,9 @@ APP_URL = "https://9s5ky5xuwk4ohrjj5sdk8t.streamlit.app"
 STRATEGY_NAMES = {"ma_crossover": "双均线趋势", "volume_breakout": "放量突破"}
 SHANGHAI = ZoneInfo("Asia/Shanghai")
 
-OFFICIAL_STATUS = "成功"
 ACTION_CHANGES = {"策略买入信号", "策略卖出信号"}
-MARKET_CLOSE = clock_time(15, 0)
 CALENDAR_CACHE = Path(__file__).resolve().parent / ".cache" / "trade_calendar.csv"
 EXIT_SKIP = 10
-
-# Higher means closer to the official daily bar of the trading day.
-STATUS_RANK = {"等待数据": 0, "上一交易日": 1, "缓存数据": 1, "预估": 2, "成功": 3}
 
 
 @dataclass(frozen=True)
@@ -238,42 +230,6 @@ def _with_realtime_bar(
     return pd.concat([base, provisional], ignore_index=True), source
 
 
-def is_official(result: SignalResult, today: date) -> bool:
-    """True only when the signal came from the official daily bar of ``today``."""
-    return result.status == OFFICIAL_STATUS and result.data_date == today
-
-
-def all_official(
-    results: list[SignalResult], today: date, *, now: datetime | None = None
-) -> bool:
-    """Before the close no bar can count as today's official daily bar."""
-    if not results:
-        return False
-    moment = now or datetime.now(SHANGHAI)
-    if moment.time() < MARKET_CLOSE:
-        return False
-    return all(is_official(result, today) for result in results)
-
-
-def merge_best(
-    previous: list[SignalResult], current: list[SignalResult]
-) -> list[SignalResult]:
-    """Keep the closest-to-official result seen so far for each symbol."""
-    if not previous:
-        return list(current)
-    best = {result.symbol: result for result in previous}
-    for result in current:
-        known = best.get(result.symbol)
-        if known is None or STATUS_RANK.get(result.status, 0) >= STATUS_RANK.get(
-            known.status, 0
-        ):
-            best[result.symbol] = result
-    order: dict[str, int] = {}
-    for result in list(previous) + list(current):
-        order.setdefault(result.symbol, len(order))
-    return sorted(best.values(), key=lambda result: order[result.symbol])
-
-
 def load_trade_calendar() -> set[date] | None:
     """Return the exchange trading calendar, or None when it cannot be fetched."""
     if CALENDAR_CACHE.exists():
@@ -314,13 +270,6 @@ def is_trading_day(day: date) -> bool:
     return day in calendar
 
 
-def parse_deadline(value: str, today: date) -> datetime:
-    hour, _, minute = value.partition(":")
-    return datetime.combine(
-        today, clock_time(int(hour), int(minute or 0)), tzinfo=SHANGHAI
-    )
-
-
 def format_report(results: list[SignalResult]) -> str:
     timestamp = datetime.now(SHANGHAI).strftime("%Y-%m-%d %H:%M")
     lines = ["A股收盘策略信号", f"运行时间：{timestamp}", ""]
@@ -332,7 +281,11 @@ def format_report(results: list[SignalResult]) -> str:
         )
         lines.extend([f"今日信号变化：{summary}", ""])
     elif results:
-        lines.extend(["今日信号变化：无买入或卖出，全部为持有或观望。", ""])
+        failed = sum(result.status == "等待数据" for result in results)
+        summary = "今日信号变化：无买入或卖出。"
+        if failed:
+            summary += f"另有 {failed} 项数据异常，请查看明细。"
+        lines.extend([summary, ""])
     provisional = [result for result in results if result.status == "预估"]
     delayed = [
         result for result in results if result.status in {"上一交易日", "缓存数据"}
@@ -383,76 +336,13 @@ def format_report(results: list[SignalResult]) -> str:
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(description="运行本地自选配置并输出收盘策略信号")
-    parser.add_argument("--retries", type=int, default=40, help="等待正式日线的重试次数")
-    parser.add_argument("--retry-delay", type=int, default=300, help="每次重试间隔（秒）")
-    parser.add_argument(
-        "--deadline", default="18:00", help="本地时间 HH:MM，超过后不再等待正式日线"
-    )
-    parser.add_argument(
-        "--on-timeout",
-        choices=["send", "skip"],
-        default="send",
-        help="到截止时间仍未取得全部正式日线时的处理方式",
-    )
-    parser.add_argument(
-        "--no-wait", action="store_true", help="只跑一轮，不等待正式日线"
-    )
-    args = parser.parse_args()
-
     today = datetime.now(SHANGHAI).date()
     if not is_trading_day(today):
         print(f"A股收盘策略信号\n运行时间：{datetime.now(SHANGHAI):%Y-%m-%d %H:%M}\n")
         print(f"今日（{today:%Y-%m-%d}）为非交易日，未生成信号。")
         raise SystemExit(EXIT_SKIP)
 
-    results = run_once(run_date=today)
-    if not args.no_wait and results and not all_official(results, today):
-        results = wait_for_official(
-            results,
-            today,
-            retries=max(args.retries, 0),
-            retry_delay=max(args.retry_delay, 1),
-            deadline=parse_deadline(args.deadline, today),
-        )
-
-    if results and not all_official(results, today) and args.on_timeout == "skip":
-        pending = [
-            f"{result.name or result.symbol}（{result.symbol}）"
-            for result in results
-            if not is_official(result, today)
-        ]
-        print(f"A股收盘策略信号\n运行时间：{datetime.now(SHANGHAI):%Y-%m-%d %H:%M}\n")
-        print(f"以下标的在 {args.deadline} 前仍未取得正式日线，本次不发送：")
-        print("、".join(pending))
-        raise SystemExit(EXIT_SKIP)
-
-    print(format_report(results))
-
-
-def wait_for_official(
-    results: list[SignalResult],
-    today: date,
-    *,
-    retries: int,
-    retry_delay: int,
-    deadline: datetime,
-) -> list[SignalResult]:
-    """Re-poll until every symbol has the official daily bar or time runs out.
-
-    Distributors publish the same-day bar at different times, so a symbol that
-    is still provisional on one pass may be official on the next one.
-    """
-    for _ in range(retries):
-        if all_official(results, today):
-            break
-        now = datetime.now(SHANGHAI)
-        if now >= deadline:
-            break
-        remaining = (deadline - now).total_seconds()
-        time.sleep(min(retry_delay, max(remaining, 1)))
-        results = merge_best(results, run_once(run_date=today))
-    return results
+    print(format_report(run_once(run_date=today)))
 
 
 if __name__ == "__main__":

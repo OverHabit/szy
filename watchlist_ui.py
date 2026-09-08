@@ -49,7 +49,7 @@ def render_watchlist_page() -> None:
         st.dataframe(overview, width="stretch", hide_index=True)
 
     st.subheader("立即运行")
-    st.caption("按当前启用的配置获取行情并计算一次信号。此操作只在网页展示结果，不发送邮件，也不会改变 Hermes 定时任务。")
+    st.caption("按当前启用的配置获取行情并计算一次信号。此操作只在网页展示结果，不发送邮件。")
     if st.button("立即运行已启用自选", type="primary", width="stretch", disabled=not enabled_count):
         with st.spinner("正在获取行情并计算信号，请稍候…"):
             st.session_state["watchlist_signal_results"] = _signal_results_frame(run_once())
