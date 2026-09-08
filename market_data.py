@@ -118,6 +118,7 @@ def fetch_a_share_history(
     adjust: str = "qfq",
     *,
     instrument_type: str = "stock",
+    require_date: date | None = None,
     cache_dir: Path | None = None,
     providers: Iterable[tuple[str, HistoryProvider]] | None = None,
 ) -> pd.DataFrame:
@@ -126,6 +127,12 @@ def fetch_a_share_history(
     ``stock`` uses the existing A-share provider chain. ``etf`` uses the
     separate ETF endpoints exposed by AKShare; ETF codes cannot be queried
     reliably through the A-share endpoints.
+
+    When ``require_date`` is given, a provider whose newest bar is older than
+    that date does not stop the search: the remaining providers are tried too
+    and the freshest result wins. Right after the close some providers publish
+    the same-day bar minutes earlier than others, so the first provider to
+    answer is not always the one that already has today's bar.
     """
     symbol = symbol.strip()
     if len(symbol) != 6 or not symbol.isdigit():
@@ -143,6 +150,7 @@ def fetch_a_share_history(
         else _default_history_providers(instrument_type)
     )
     failures: list[str] = []
+    freshest: pd.DataFrame | None = None
 
     for source_name, provider in active_providers:
         for attempt in range(2):
@@ -161,12 +169,24 @@ def fetch_a_share_history(
                     raise ValueError("指定日期范围内没有交易数据")
                 result.attrs["source"] = source_name
                 result.attrs["stale"] = False
-                return result
+                if require_date is None:
+                    return result
+                latest = pd.Timestamp(result["date"].max()).date()
+                if latest >= require_date:
+                    return result
+                if freshest is None or latest > pd.Timestamp(
+                    freshest["date"].max()
+                ).date():
+                    freshest = result
+                break
             except Exception as exc:
                 if attempt == 1:
                     failures.append(f"{source_name}: {type(exc).__name__}")
                 else:
                     time.sleep(0.5)
+
+    if freshest is not None:
+        return freshest
 
     cached_result = _filter_history(cached, start_date, end_date)
     if not cached_result.empty:
