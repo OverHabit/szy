@@ -2,14 +2,7 @@ from __future__ import annotations
 
 from datetime import date
 
-import pandas as pd
-import plotly.graph_objects as go
 import streamlit as st
-from plotly.subplots import make_subplots
-
-from market_data import fetch_a_share_history, resolve_a_share
-from quant_core import BacktestMetrics, run_ma_crossover, run_volume_breakout
-from watchlist_ui import render_watchlist_page
 
 
 STRATEGIES = {
@@ -103,14 +96,19 @@ st.markdown(
 
 with st.sidebar:
     page = st.radio("功能", ["单股回测", "自选信号"], horizontal=True)
+    st.caption("版本 2026.10.13.2")
 
 if page == "自选信号":
+    from watchlist_ui import render_watchlist_page
+
     render_watchlist_page()
     st.stop()
 
 
 @st.cache_data(ttl=3600, show_spinner=False)
 def load_prices(symbol: str, start: date, end: date, adjust: str) -> pd.DataFrame:
+    from market_data import fetch_a_share_history
+
     return fetch_a_share_history(symbol, start, end, adjust)
 
 
@@ -475,6 +473,15 @@ st.caption("可选趋势与成交量策略 · AKShare 日线数据 · 仅用于�
 if not run_clicked:
     st.info("在左侧调整参数，然后点击“运行回测”。")
     st.stop()
+
+# Load charting and market providers only when a backtest is requested.
+import pandas as pd
+import plotly.graph_objects as go
+from plotly.subplots import make_subplots
+
+from market_data import resolve_a_share
+from quant_core import BacktestMetrics, run_ma_crossover, run_volume_breakout
+
 
 try:
     with st.spinner("正在获取行情并计算策略…"):

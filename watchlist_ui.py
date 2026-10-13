@@ -2,18 +2,21 @@
 
 from __future__ import annotations
 
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 import pandas as pd
 import streamlit as st
 
-from daily_signal import SignalResult, run_once
 from watchlist_store import (
     DEFAULT_PARAMETERS,
     delete_watchlist_entry,
     list_watchlist,
     save_watchlist_entry,
 )
+
+
+if TYPE_CHECKING:
+    from daily_signal import SignalResult
 
 
 STRATEGIES = {
@@ -55,6 +58,8 @@ def render_watchlist_page() -> None:
     st.subheader("立即运行")
     st.caption("按当前启用的配置获取行情并计算一次信号。此操作只在网页展示结果，不发送邮件。")
     if st.button("立即运行已启用自选", type="primary", width="stretch", disabled=not enabled_count):
+        from daily_signal import run_once
+
         with st.spinner("正在获取行情并计算信号，请稍候…"):
             st.session_state["watchlist_signal_results"] = _signal_results_frame(run_once())
 
