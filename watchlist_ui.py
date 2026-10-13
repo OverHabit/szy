@@ -30,6 +30,10 @@ def render_watchlist_page() -> None:
         "如需长期跨设备共用，下一步可接入共享数据库。"
     )
 
+    notice = st.session_state.pop("watchlist_notice", None)
+    if notice:
+        st.success(notice)
+
     entries = list_watchlist()
     enabled_count = sum(bool(entry["enabled"]) for entry in entries)
     st.subheader(f"已配置 {len(entries)} 项，其中启用 {enabled_count} 项")
@@ -145,8 +149,14 @@ def _entry_form(form_key: str, entry: dict[str, Any]) -> None:
         delete = delete_col.form_submit_button("删除此项", width="stretch") if form_key != "new" else False
 
     if delete:
-        delete_watchlist_entry(int(entry["id"]))
-        st.rerun()
+        try:
+            delete_watchlist_entry(int(entry["id"]))
+        except Exception as exc:
+            st.error(f"无法删除：{exc}")
+        else:
+            display_name = entry.get("name") or entry["symbol"]
+            st.session_state["watchlist_notice"] = f"已删除 {display_name}（{entry['symbol']}）的配置。"
+            st.rerun()
     if save:
         try:
             save_watchlist_entry(

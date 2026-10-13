@@ -54,8 +54,11 @@ def _connect(database_path: Path | str | None = None) -> sqlite3.Connection:
 
 
 def initialise_watchlist(database_path: Path | str | None = None) -> None:
-    """Create local tables and add the requested initial ETF configuration."""
+    """Migrate local tables; seed defaults only when creating the watchlist."""
     with _connect(database_path) as connection:
+        table_exists = connection.execute(
+            "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'watchlist_entries'"
+        ).fetchone() is not None
         connection.executescript(
             """
             CREATE TABLE IF NOT EXISTS watchlist_entries (
@@ -92,6 +95,10 @@ def initialise_watchlist(database_path: Path | str | None = None) -> None:
         connection.execute(
             "UPDATE watchlist_entries SET instrument_type = 'etf' WHERE symbol = '588000'"
         )
+        # An existing table, including an empty one, holds the user's choices.
+        # Re-seeding it would undo deletions and changes to default symbols.
+        if table_exists:
+            return
         for default_entry in DEFAULT_WATCHLIST:
             existing = connection.execute(
                 "SELECT 1 FROM watchlist_entries WHERE symbol = ? AND strategy_id = ?",
