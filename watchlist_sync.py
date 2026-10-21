@@ -50,10 +50,14 @@ def _secret(name: str) -> str | None:
     value = os.environ.get(name)
     if value and value.strip():
         return value.strip()
+    stored = None
     try:  # Streamlit 云端把令牌放在 secrets 里
         import streamlit as st
 
-        stored = st.secrets.get(name)  # 没有 secrets.toml 时会抛异常
+        try:
+            stored = st.secrets[name]
+        except Exception:
+            stored = st.secrets.get(name)
     except Exception:
         return None
     return str(stored).strip() if stored else None
