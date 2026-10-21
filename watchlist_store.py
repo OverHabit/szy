@@ -81,6 +81,10 @@ def initialise_watchlist(database_path: Path | str | None = None) -> None:
                 UNIQUE(symbol, strategy_id)
             );
 
+            CREATE TABLE IF NOT EXISTS settings (
+                key TEXT PRIMARY KEY,
+                value TEXT NOT NULL
+            );
             """
         )
         columns = {
@@ -182,6 +186,74 @@ def delete_watchlist_entry(
     initialise_watchlist(database_path)
     with _connect(database_path) as connection:
         connection.execute("DELETE FROM watchlist_entries WHERE id = ?", (entry_id,))
+
+
+def export_watchlist(database_path: Path | str | None = None) -> list[dict[str, Any]]:
+    """导出全部配置（含已暂停项），用于跨端同步；不含本机自增 id。"""
+    columns = (
+        "symbol", "name", "instrument_type", "strategy_id", "enabled", "adjust",
+        "short_window", "long_window", "breakout_window", "volume_window",
+        "volume_multiple", "exit_window", "fee_bps", "created_at", "updated_at",
+    )
+    return [{key: entry[key] for key in columns} for entry in list_watchlist(database_path)]
+
+
+def replace_watchlist(
+    entries: list[dict[str, Any]], database_path: Path | str | None = None
+) -> int:
+    """用远端清单整表替换本机配置，返回实际写入的条数。
+
+    单条不合法只跳过该条，不放弃整批——否则一条脏数据会让本机清单永远同步失败。
+    """
+    initialise_watchlist(database_path)
+    written = 0
+    with _connect(database_path) as connection:
+        connection.execute("DELETE FROM watchlist_entries")
+        for raw in entries:
+            try:
+                values = _validated_entry(raw)
+            except (ValueError, TypeError):
+                continue
+            now = _now()
+            connection.execute(
+                """
+                INSERT INTO watchlist_entries (
+                    symbol, name, instrument_type, strategy_id, enabled, adjust, short_window,
+                    long_window, breakout_window, volume_window, volume_multiple,
+                    exit_window, fee_bps, created_at, updated_at
+                ) VALUES (
+                    :symbol, :name, :instrument_type, :strategy_id, :enabled, :adjust, :short_window,
+                    :long_window, :breakout_window, :volume_window, :volume_multiple,
+                    :exit_window, :fee_bps, :created_at, :updated_at
+                )
+                """,
+                {
+                    **values,
+                    "created_at": str(raw.get("created_at") or now),
+                    "updated_at": str(raw.get("updated_at") or now),
+                },
+            )
+            written += 1
+    return written
+
+
+def get_setting(
+    key: str, default: str | None = None, database_path: Path | str | None = None
+) -> str | None:
+    initialise_watchlist(database_path)
+    with _connect(database_path) as connection:
+        row = connection.execute("SELECT value FROM settings WHERE key = ?", (key,)).fetchone()
+    return default if row is None else str(row["value"])
+
+
+def set_setting(key: str, value: str, database_path: Path | str | None = None) -> None:
+    initialise_watchlist(database_path)
+    with _connect(database_path) as connection:
+        connection.execute(
+            "INSERT INTO settings (key, value) VALUES (?, ?) "
+            "ON CONFLICT(key) DO UPDATE SET value = excluded.value",
+            (key, str(value)),
+        )
 
 
 def _validated_entry(entry: dict[str, Any]) -> dict[str, Any]:

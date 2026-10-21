@@ -25,7 +25,7 @@ def test_initial_pages_are_lightweight_and_backtest_still_runs(tmp_path):
         sys.meta_path.insert(0, blocker)
         app = AppTest.from_file('app.py').run()
         assert not app.exception
-        assert any('2026.10.13.2' in item.value for item in app.caption)
+        assert any('2026.10.21.1' in item.value for item in app.caption)
         app.radio[0].set_value('自选信号').run()
         assert not app.exception
         target = next(item for item in app.expander if '001283' in item.label)

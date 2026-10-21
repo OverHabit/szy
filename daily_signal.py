@@ -25,6 +25,7 @@ SHANGHAI = ZoneInfo("Asia/Shanghai")
 
 ACTION_CHANGES = {"策略买入信号", "策略卖出信号"}
 CALENDAR_CACHE = Path(__file__).resolve().parent / ".cache" / "trade_calendar.csv"
+SYNC_LOG = Path(__file__).resolve().parent / ".data" / "sync.log"
 EXIT_SKIP = 10
 
 
@@ -335,6 +336,24 @@ def format_report(results: list[SignalResult]) -> str:
     return "\n".join(lines)
 
 
+def _sync_watchlist() -> None:
+    """跑盘前先和云端对一次清单。
+
+    刻意不打印到 stdout/stderr：run_daily_signal.sh 用 `2>&1 | tee` 落盘，
+    任何多余输出都会污染报告正文，进而被原样发进邮件。结果只写 .data/sync.log。
+    """
+    from watchlist_sync import describe, ensure_synced
+
+    result = ensure_synced()
+    try:
+        SYNC_LOG.parent.mkdir(parents=True, exist_ok=True)
+        stamp = datetime.now(SHANGHAI).strftime("%Y-%m-%d %H:%M:%S")
+        with SYNC_LOG.open("a", encoding="utf-8") as handle:
+            handle.write(f"{stamp} {describe(result)}\n")
+    except OSError:
+        pass
+
+
 def main() -> None:
     today = datetime.now(SHANGHAI).date()
     if not is_trading_day(today):
@@ -342,6 +361,7 @@ def main() -> None:
         print(f"今日（{today:%Y-%m-%d}）为非交易日，未生成信号。")
         raise SystemExit(EXIT_SKIP)
 
+    _sync_watchlist()
     print(format_report(run_once(run_date=today)))
 
 

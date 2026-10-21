@@ -1,7 +1,8 @@
-"""Streamlit interface for changing the local configurable watchlist."""
+"""Streamlit interface for changing the configurable watchlist."""
 
 from __future__ import annotations
 
+import time
 from typing import TYPE_CHECKING, Any
 
 import pandas as pd
@@ -13,6 +14,7 @@ from watchlist_store import (
     list_watchlist,
     save_watchlist_entry,
 )
+from watchlist_sync import describe, ensure_synced, mark_pending, sync_available
 
 
 if TYPE_CHECKING:
@@ -24,15 +26,17 @@ STRATEGIES = {
     "volume_breakout": "放量突破",
 }
 
+SYNC_MIN_INTERVAL = 60  # 秒；同一标签页内的重复 rerun 不打 GitHub API
+
 
 def render_watchlist_page() -> None:
-    st.title("自选信号")
-    st.caption("在此调整股票、策略和参数。配置会保存在当前电脑，无需编辑配置文件。")
-    st.info(
-        "此页保存到当前运行环境的本地数据库。云端 Streamlit 与本机各自保存一份配置；"
-        "如需长期跨设备共用，下一步可接入共享数据库。"
-    )
+    if not _password_gate():
+        return
 
+    st.title("自选信号")
+    st.caption("在此调整股票、策略和参数。清单会同步到云端，收盘信号与本机页面共用同一份配置。")
+
+    _sync_once_per_session()
     notice = st.session_state.pop("watchlist_notice", None)
     if notice:
         st.success(notice)
@@ -40,6 +44,7 @@ def render_watchlist_page() -> None:
     entries = list_watchlist()
     enabled_count = sum(bool(entry["enabled"]) for entry in entries)
     st.subheader(f"已配置 {len(entries)} 项，其中启用 {enabled_count} 项")
+    _render_sync_line()
     if entries:
         overview = pd.DataFrame(
             [
@@ -89,6 +94,45 @@ def render_watchlist_page() -> None:
             _entry_form(str(entry["id"]), entry)
 
     st.caption("研究提示：参数与历史回测仅供研究参考，不构成投资建议。")
+
+
+def _password_gate() -> bool:
+    """可选访问密码：只有配置了 WATCHLIST_PAGE_PASSWORD 才生效。
+
+    网页端是公开链接，而清单现在会真正影响收盘信号，必要时给自己留一道门。
+    """
+    try:
+        expected = str(st.secrets.get("WATCHLIST_PAGE_PASSWORD") or "")
+    except Exception:
+        expected = ""
+    if not expected or st.session_state.get("watchlist_authed"):
+        return True
+
+    st.subheader("访问受限")
+    entered = st.text_input("访问密码", type="password", key="watchlist_password_input")
+    if entered:
+        if entered == expected:
+            st.session_state["watchlist_authed"] = True
+            st.rerun()
+        st.error("密码不正确。")
+    return False
+
+
+def _sync_once_per_session() -> None:
+    """进入页面时与云端对一次账，60 秒内不重复请求。"""
+    now = time.time()
+    if now - float(st.session_state.get("watchlist_sync_at") or 0) < SYNC_MIN_INTERVAL:
+        return
+    st.session_state["watchlist_sync_at"] = now
+    st.session_state["watchlist_sync_message"] = describe(ensure_synced())
+
+
+def _render_sync_line() -> None:
+    message = st.session_state.get("watchlist_sync_message")
+    if not sync_available():
+        st.warning("同步未启用：云端未配置 WATCHLIST_SYNC_TOKEN。本页的修改只停留在当前容器，不会进入收盘信号。")
+    elif message:
+        st.caption(f"云端同步 · {message}")
 
 
 def _signal_results_frame(results: list[SignalResult]) -> pd.DataFrame:
@@ -159,8 +203,10 @@ def _entry_form(form_key: str, entry: dict[str, Any]) -> None:
         except Exception as exc:
             st.error(f"无法删除：{exc}")
         else:
+            mark_pending()
+            message = describe(ensure_synced())
             display_name = entry.get("name") or entry["symbol"]
-            st.session_state["watchlist_notice"] = f"已删除 {display_name}（{entry['symbol']}）的配置。"
+            st.session_state["watchlist_notice"] = f"已删除 {display_name}（{entry['symbol']}）的配置。{message}"
             st.rerun()
     if save:
         try:
@@ -182,7 +228,9 @@ def _entry_form(form_key: str, entry: dict[str, Any]) -> None:
         except Exception as exc:
             st.error(f"无法保存：{exc}")
         else:
-            st.success("配置已保存。")
+            mark_pending()
+            message = describe(ensure_synced())
+            st.success(f"配置已保存。{message}")
             st.rerun()
 
 

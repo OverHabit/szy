@@ -96,7 +96,7 @@ st.markdown(
 
 with st.sidebar:
     page = st.radio("功能", ["单股回测", "自选信号"], horizontal=True)
-    st.caption("版本 2026.10.13.2")
+    st.caption("版本 2026.10.21.1")
 
 if page == "自选信号":
     from watchlist_ui import render_watchlist_page

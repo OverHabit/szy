@@ -11,3 +11,7 @@ publish_to_github.ps1
 .github_token
 enable_codex_git_access.ps1
 enable_codex_git_access.bat
+
+# 同步凭据（切勿提交）
+.env
+.streamlit/secrets.toml
